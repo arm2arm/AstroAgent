@@ -128,8 +128,8 @@ All tests pass successfully.
 - CrewAI ≥0.80.0
 - Streamlit ≥1.32.0
 - Pydantic ≥2.6.0
-- OpenAI ≥1.12.0
-- Python 3.9+
+- OpenAI ≥1.60.0
+- Python 3.12+
 
 ### Code Quality
 - ✅ All syntax checks passed

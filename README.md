@@ -40,7 +40,7 @@ AstroAgent is a production-ready AI-powered workflow system that automatically d
 
 ### Prerequisites
 
-- Python 3.9 or higher
+- Python 3.12 or higher
 - Access to an OpenAI-compatible LLM endpoint
 - pip package manager
 

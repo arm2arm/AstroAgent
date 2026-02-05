@@ -4,7 +4,7 @@
 
 ### Prerequisites
 
-1. **Python 3.9+** installed
+1. **Python 3.12+** installed
 2. **Access to an OpenAI-compatible LLM endpoint** (e.g., AIP endpoint)
 3. **pip** package manager
 
