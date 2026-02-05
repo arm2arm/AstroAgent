@@ -222,13 +222,13 @@ class AstronomyWorkflow(Flow[WorkflowState]):
         return {
             "workflow_id": self.state.workflow_id,
             "status": "completed",
-            "code_file": self._get_code_path()
+            "code_file": self.get_code_path()
         }
 
     def _save_code(self):
         """Save generated code and README to files"""
         # Save Python script
-        code_filepath = self._get_code_path()
+        code_filepath = self.get_code_path()
         os.makedirs(os.path.dirname(code_filepath), exist_ok=True)
         
         with open(code_filepath, 'w') as f:
@@ -237,15 +237,15 @@ class AstronomyWorkflow(Flow[WorkflowState]):
         print(f"💾 Code saved to: {code_filepath}")
         
         # Save README.md
-        readme_filepath = self._get_readme_path()
-        readme_content = self._generate_readme()
+        readme_filepath = self.get_readme_path()
+        readme_content = self.generate_readme()
         
         with open(readme_filepath, 'w') as f:
             f.write(readme_content)
         
         print(f"📄 README saved to: {readme_filepath}")
 
-    def _get_code_path(self) -> str:
+    def get_code_path(self) -> str:
         """Get path for code file"""
         config = get_workflow_config()
         return os.path.join(
@@ -253,7 +253,7 @@ class AstronomyWorkflow(Flow[WorkflowState]):
             f"workflow_{self.state.workflow_id}.py"
         )
 
-    def _get_readme_path(self) -> str:
+    def get_readme_path(self) -> str:
         """Get path for README file"""
         config = get_workflow_config()
         return os.path.join(
@@ -261,7 +261,7 @@ class AstronomyWorkflow(Flow[WorkflowState]):
             f"README_{self.state.workflow_id}.md"
         )
 
-    def _generate_readme(self) -> str:
+    def generate_readme(self) -> str:
         """Generate README.md for workflow"""
         return f"""# Astronomy Workflow {self.state.workflow_id}
 
@@ -370,5 +370,5 @@ def run_workflow(research_question: str, data_source: str = "gaia_dr3") -> Dict:
         "statistical_approach": state.statistical_approach,
         "generated_code": state.generated_code,
         "review_report": state.review_report,
-        "code_file": workflow._get_code_path()
+        "code_file": workflow.get_code_path()
     }

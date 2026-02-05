@@ -247,8 +247,8 @@ def launch_workflow(research_question: str, data_source: str):
                 'statistical_approach': state.statistical_approach,
                 'generated_code': state.generated_code,
                 'review_report': state.review_report,
-                'code_file': workflow._get_code_path(),
-                'readme_file': workflow._get_readme_path()
+                'code_file': workflow.get_code_path(),
+                'readme_file': workflow.get_readme_path()
             }
             st.session_state.workflows.append(workflow_data)
             
@@ -258,8 +258,8 @@ def launch_workflow(research_question: str, data_source: str):
             # Show file locations
             st.info(f"""
             **Generated Files:**
-            - 📄 Python Script: `{workflow._get_code_path()}`
-            - 📖 Documentation: `{workflow._get_readme_path()}`
+            - 📄 Python Script: `{workflow.get_code_path()}`
+            - 📖 Documentation: `{workflow.get_readme_path()}`
             """)
             
             # Download buttons
@@ -273,7 +273,7 @@ def launch_workflow(research_question: str, data_source: str):
                     use_container_width=True
                 )
             with col2:
-                readme_content = workflow._generate_readme()
+                readme_content = workflow.generate_readme()
                 st.download_button(
                     "📥 Download README.md",
                     readme_content,
