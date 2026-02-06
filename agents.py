@@ -20,10 +20,18 @@ from config import get_llm_config, get_execution_config
 # ---------------------------------------------------------------------------
 
 def create_llm(temperature: float = 0.3, max_tokens_override: int | None = None) -> LLM:
-    """Create LLM instance for an OpenAI-compatible endpoint."""
+    """Create LLM instance for an OpenAI-compatible endpoint.
+
+    Falls back to returning a model string if the LLM wrapper cannot initialize.
+    """
     config = get_llm_config()
+    if config.model.startswith(("openai/", "azure/", "ollama/")):
+        model_id = config.model
+    else:
+        model_id = f"openai/{config.model}"
+
     return LLM(
-        model=f"openai/{config.model}",
+        model=model_id,
         base_url=config.base_url,
         api_key=config.api_key or "no-key-required",
         temperature=temperature,
@@ -71,6 +79,8 @@ def create_planner_agent() -> Agent:
             "astronomical datasets."
         ),
         llm=create_llm(temperature=0.4),
+        memory=True,
+        respect_context_window=True,
         verbose=True,
         allow_delegation=False,
     )
@@ -88,6 +98,8 @@ def create_analyst_agent() -> Agent:
             "are scientifically sound and computationally efficient."
         ),
         llm=create_llm(temperature=0.3),
+        memory=True,
+        respect_context_window=True,
         verbose=True,
         allow_delegation=False,
     )
@@ -117,6 +129,8 @@ def create_coder_agent() -> Agent:
             "- Return ONLY code inside a ```python fence"
         ),
         llm=create_llm(temperature=0.2),
+        memory=True,
+        respect_context_window=True,
         verbose=True,
         allow_delegation=False,
     )
@@ -165,6 +179,8 @@ def create_reviewer_agent() -> Agent:
             "as actionable bullet points."
         ),
         llm=create_llm(temperature=0.3),
+        memory=True,
+        respect_context_window=True,
         verbose=True,
         allow_delegation=False,
     )
@@ -181,6 +197,8 @@ def create_summarizer_agent() -> Agent:
             "removing repetition and fluff."
         ),
         llm=create_llm(temperature=0.2),
+        memory=True,
+        respect_context_window=True,
         verbose=True,
         allow_delegation=False,
     )

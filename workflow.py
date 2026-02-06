@@ -43,7 +43,6 @@ from config import (
     get_llm_config,
     get_memory_config,
 )
-from memory_store import get_memory_store
 from token_budget import build_budget, estimate_tokens, truncate_text
 
 
@@ -140,17 +139,7 @@ class AstronomyWorkflow(Flow[WorkflowState]):
         )
         os.makedirs(self._results_dir, exist_ok=True)
 
-        if self.mem_config.enabled:
-            self.memory = get_memory_store(
-                db_path=self.mem_config.db_path,
-                model=get_llm_config().model,
-            )
-            self.memory.index_paths(
-                self.mem_config.index_paths,
-                source="docs",
-                chunk_tokens=self.mem_config.chunk_tokens,
-                force=self.mem_config.force_reindex,
-            )
+        # External RAG store removed for startup speed. Agent-local memory remains.
 
         # Honour workflow-config max iterations
         self.state.max_iterations = self.wf_config.max_review_iterations
@@ -207,6 +196,12 @@ class AstronomyWorkflow(Flow[WorkflowState]):
             sig = inspect.signature(Crew)
             if "memory" in sig.parameters:
                 crew_kwargs["memory"] = True
+            # Attach per-profile embedder when memory is enabled
+            if "embedder" in sig.parameters:
+                from config import get_crewai_embedder_dict
+                embedder = get_crewai_embedder_dict()
+                if embedder:
+                    crew_kwargs["embedder"] = embedder
         except Exception:
             pass
         return Crew(**crew_kwargs)
@@ -265,42 +260,10 @@ class AstronomyWorkflow(Flow[WorkflowState]):
         return result.raw
 
     def _retrieve_memory(self, label: str, query: str) -> str:
-        if not self.memory or not query:
-            return ""
-
-        items = self.memory.search(query, top_k=self.mem_config.top_k)
-        if not items:
-            return ""
-
-        snippets: list[str] = []
-        for item in items:
-            header_parts = [p for p in [item.source, item.path] if p]
-            header = " / ".join(header_parts)
-            snippet = item.content.strip()
-            if header:
-                snippets.append(f"[{header}]\n{snippet}")
-            else:
-                snippets.append(snippet)
-
-        combined = "\n\n".join(snippets)
-        combined = self._summarize_if_needed(combined, f"retrieved memory for {label}")
-        return f"Relevant memory:\n{combined}\n"
+        return ""
 
     def _store_memory(self, kind: str, text: str) -> None:
-        if not self.memory or not text:
-            return
-        metadata = {
-            "workflow_id": self.state.workflow_id,
-            "data_source": self.state.data_source,
-            "kind": kind,
-        }
-        self.memory.add_text(
-            text=text,
-            source="workflow",
-            path=f"{self.state.workflow_id}/{kind}",
-            metadata=metadata,
-            chunk_tokens=self.mem_config.chunk_tokens,
-        )
+        return
 
     # ======================================================================
     # Phase 0 -- classify

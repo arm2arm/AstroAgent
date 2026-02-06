@@ -13,6 +13,10 @@
         "/^cd /workspaces/AstroAgent && python3 -c \"\nfrom workflow import WorkflowState, AstronomyWorkflow\nstate = WorkflowState\\(research_question='Test', data_source='numpy', task_complexity=2\\)\nwf = AstronomyWorkflow\\(state=state\\)\nprint\\('planner prop:', wf\\._planner\\)   # should be None\nprint\\('analyst prop:', wf\\._analyst\\)   # should be None\nprint\\('state\\.status:', wf\\.state\\.status\\)\nprint\\('OK - AstronomyWorkflow instantiates without error'\\)\n\"$/": {
             "approve": true,
             "matchCommandLine": true
+        },
+        "/^cd /workspaces/AstroAgent && python3 -c \"\nfrom config import get_llm_config\nc = get_llm_config\\(\\)\nprint\\('model:', c\\.model\\)\nprint\\('base_url:', c\\.base_url\\)\nprint\\('api_key:', c\\.api_key\\[:10\\] if c\\.api_key else None\\)\nprint\\('max_tokens:', c\\.max_tokens\\)\nprint\\('timeout:', c\\.timeout\\)\n\" 2>&1$/": {
+            "approve": true,
+            "matchCommandLine": true
         }
     }
 }

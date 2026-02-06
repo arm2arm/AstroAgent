@@ -12,6 +12,7 @@ import streamlit as st
 import sys
 import yaml
 import requests
+from typing import TYPE_CHECKING
 from importlib import metadata
 from datetime import datetime
 from pathlib import Path
@@ -22,7 +23,8 @@ import threading
 import time
 import logging
 
-from workflow import WorkflowState, AstronomyWorkflow
+if TYPE_CHECKING:
+    from workflow import WorkflowState, AstronomyWorkflow
 from config import (
     get_execution_config,
     get_llm_config,
@@ -268,10 +270,17 @@ def apply_llm_overrides():
     os.environ["LLM_MODEL"] = st.session_state.get("llm_model_choice", profile.model)
     os.environ["LLM_CONTEXT_WINDOW"] = str(profile.context_window)
     os.environ["LLM_OUTPUT_BUDGET"] = str(profile.output_budget)
+    # Embedding model config for CrewAI memory
+    os.environ["EMBED_MODEL"] = profile.embed_model or ""
+    os.environ["EMBED_PROVIDER"] = profile.embed_provider or "ollama"
     # LiteLLM / openai client also reads OPENAI_API_KEY directly
     os.environ["OPENAI_API_KEY"] = api_key
+    # Ensure OpenAI-compatible clients use the correct base URL
+    os.environ["OPENAI_BASE_URL"] = base_url
+    os.environ["OPENAI_API_BASE"] = base_url
 
 
+@st.cache_data(ttl=300, show_spinner=False)
 def fetch_available_models(base_url: str, api_key: str) -> list[str]:
     """Fetch model IDs from an OpenAI-compatible /v1 endpoint."""
     base = base_url.rstrip("/")
@@ -475,6 +484,7 @@ def render_new_workflow_page():
 
 def launch_workflow(research_question: str, data_source: str, task_complexity: int):
     """Launch new workflow with progress tracking and live output."""
+    from workflow import WorkflowState, AstronomyWorkflow
     progress_container = st.container()
 
     with progress_container:

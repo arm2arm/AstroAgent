@@ -5,8 +5,8 @@ streamlit
 pydantic
 
 # LLM and API
-litellm[proxy]
-openai
+litellm>=1.50.0,<1.70.0
+openai~=1.83.0
 requests
 tiktoken
 

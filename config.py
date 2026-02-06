@@ -20,6 +20,8 @@ class LLMProfile:
     model: str
     context_window: int = 32768
     output_budget: int = 8192
+    embed_model: str = ""          # embedding model name (e.g. "qwen3-embedding")
+    embed_provider: str = "ollama"  # embedding provider: "ollama", "openai", etc.
 
 
 @dataclass
@@ -36,6 +38,8 @@ class LLMConfig:
     safety_margin: int = 512
     summary_trigger_tokens: int = 2000
     summary_target_tokens: int = 600
+    embed_model: str = "qwen3-embedding"
+    embed_provider: str = "ollama"
 
 
 @dataclass
@@ -62,7 +66,7 @@ class WorkflowConfig:
 @dataclass
 class MemoryConfig:
     """SQLite memory configuration for retrieval-augmented context."""
-    enabled: bool = True
+    enabled: bool = False
     db_path: str = ".crewai/memory_astroagent.db"
     index_paths: list[str] = field(default_factory=lambda: [
         "README.md",
@@ -87,6 +91,8 @@ def load_llm_profiles() -> list[LLMProfile]:
         model = os.getenv(f"LLM_{i}_MODEL", "")
         context_window = int(os.getenv(f"LLM_{i}_CONTEXT_WINDOW", "32768"))
         output_budget = int(os.getenv(f"LLM_{i}_OUTPUT_BUDGET", "8192"))
+        embed_model = os.getenv(f"LLM_{i}_EMBED_MODEL", "qwen3-embedding")
+        embed_provider = os.getenv(f"LLM_{i}_EMBED_PROVIDER", "ollama")
         profiles.append(
             LLMProfile(
                 name=name,
@@ -95,6 +101,8 @@ def load_llm_profiles() -> list[LLMProfile]:
                 model=model,
                 context_window=context_window,
                 output_budget=output_budget,
+                embed_model=embed_model,
+                embed_provider=embed_provider,
             )
         )
     return profiles
@@ -114,7 +122,52 @@ def get_llm_config() -> LLMConfig:
         safety_margin=int(os.getenv("LLM_SAFETY_MARGIN", "512")),
         summary_trigger_tokens=int(os.getenv("LLM_SUMMARY_TRIGGER_TOKENS", "2000")),
         summary_target_tokens=int(os.getenv("LLM_SUMMARY_TARGET_TOKENS", "600")),
+        embed_model=os.getenv("EMBED_MODEL", "qwen3-embedding"),
+        embed_provider=os.getenv("EMBED_PROVIDER", "ollama"),
     )
+
+
+def get_crewai_embedder_dict() -> dict | None:
+    """Build the embedder config dict for CrewAI Crew(embedder=...).
+
+    Returns None if no embed_model is configured (falls back to CrewAI default).
+    """
+    cfg = get_llm_config()
+    if not cfg.embed_model:
+        return None
+
+    # Derive the base Ollama URL by stripping /v1 suffix
+    base = cfg.base_url.rstrip("/")
+    if base.endswith("/v1"):
+        base = base[:-3]
+
+    provider = cfg.embed_provider.lower()
+    if provider == "ollama":
+        return {
+            "provider": "ollama",
+            "config": {
+                "model": cfg.embed_model,
+                "url": base,
+            },
+        }
+    elif provider == "openai":
+        return {
+            "provider": "openai",
+            "config": {
+                "model": cfg.embed_model,
+                "api_key": cfg.api_key or os.getenv("OPENAI_API_KEY", ""),
+                "api_base": cfg.base_url,
+            },
+        }
+    else:
+        # Generic provider — pass model + URL, let CrewAI handle it
+        return {
+            "provider": provider,
+            "config": {
+                "model": cfg.embed_model,
+                "url": base,
+            },
+        }
 
 
 def get_execution_config() -> ExecutionConfig:
@@ -144,7 +197,7 @@ def get_workflow_config() -> WorkflowConfig:
 
 def get_memory_config() -> MemoryConfig:
     """Load memory/RAG configuration."""
-    enabled = os.getenv("MEMORY_ENABLED", "true").lower() in {"1", "true", "yes"}
+    enabled = os.getenv("MEMORY_ENABLED", "false").lower() in {"1", "true", "yes"}
     raw_paths = os.getenv(
         "MEMORY_INDEX_PATHS",
         "README.md,QUICKSTART.md,project.md,example_tasks",
