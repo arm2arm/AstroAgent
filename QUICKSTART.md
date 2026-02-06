@@ -37,6 +37,18 @@ AIP_API_KEY=your-actual-api-key-here
 AIP_MODEL=llama-3-70b
 ```
 
+#### Optional: Use Makefile Shortcuts
+
+```bash
+make build   # Install dependencies
+make up      # Start Streamlit in the background
+make down    # Stop Streamlit started by make up
+make status  # Check Streamlit status
+make clean   # Remove outputs and local run artifacts
+```
+
+`make up` writes logs to `.streamlit.log` and stores the PID in `.streamlit.pid`.
+
 #### 3. Test Installation
 
 Run the component test:

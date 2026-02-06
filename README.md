@@ -172,6 +172,20 @@ VERBOSE=true
 
 ## Development
 
+### Make Commands
+
+Common tasks are available via `make`:
+
+```bash
+make build   # Install dependencies
+make up      # Start Streamlit in the background
+make down    # Stop Streamlit started by make up
+make status  # Check Streamlit status
+make clean   # Remove outputs and local run artifacts
+```
+
+`make up` writes logs to `.streamlit.log` and stores the PID in `.streamlit.pid`.
+
 ### Running Tests
 
 ```bash

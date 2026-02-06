@@ -123,6 +123,7 @@ All tests pass successfully.
 - **QUICKSTART.md**: Step-by-step getting started guide
 - **.env.example**: Configuration template
 - **requirements.txt**: All dependencies with version constraints
+- **Makefile**: Convenience commands (`make build`, `make up`, `make down`, `make clean`, `make status`)
 
 ### Technology Versions
 - CrewAI ≥0.80.0
