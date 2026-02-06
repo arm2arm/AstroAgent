@@ -10,7 +10,8 @@ AstroAgent is a production-ready AI-powered workflow system that automatically d
 
 - **4 Specialized AI Agents**: Planner, Analyst, Coder, and Reviewer working in sequence
 - **Interactive Streamlit Dashboard**: Clean UI for workflow creation and monitoring
-- **Local LLM Support**: Uses OpenAI-compatible endpoints (configured for AIP)
+- **Flexible LLM Support**: AIP endpoint, local Ollama, or custom OpenAI-compatible endpoints
+- **Endpoint Model Discovery**: Choose from available models in the UI
 - **Astronomy-Focused**: Built for Gaia DR3, DR2, SDSS, and 2MASS data analysis
 - **Complete Outputs**: Generates executable Python scripts with documentation
 
@@ -84,7 +85,7 @@ AstroAgent is a production-ready AI-powered workflow system that automatically d
 
 1. Navigate to the **🚀 New Workflow** page
 2. Enter your research question (or select an example)
-3. Choose your data source (Gaia DR3, DR2, SDSS, or 2MASS)
+3. Choose your data source (Gaia DR3/DR2, SDSS, 2MASS, gaia.aip.de, data.aip.de, or numpy)
 4. Click **🚀 Launch Workflow**
 5. Watch as the 4 agents process your request:
    - **Planning**: Creates detailed analysis plan
@@ -94,10 +95,7 @@ AstroAgent is a production-ready AI-powered workflow system that automatically d
 
 ### Example Research Questions
 
-- "Analyze the color-magnitude distribution of red giant stars in the Galactic bulge"
-- "Study the proper motion distribution of stars in the solar neighborhood"
-- "Investigate the relationship between stellar metallicity and kinematics"
-- "Create an HR diagram for open cluster NGC 2516"
+Examples are loaded from `example_tasks/*.yaml` and can be customized per task.
 
 ### Viewing Results
 
@@ -125,6 +123,9 @@ AstroAgent/
 ├── config.py               # Configuration management
 ├── requirements.txt        # Python dependencies
 ├── .env.example            # Environment template
+├── example_tasks/           # YAML example tasks
+├── .streamlit/config.toml   # Streamlit auto-rerun on save
+├── Makefile                 # Convenience commands
 ├── outputs/
 │   ├── workflows/          # Generated Python scripts
 │   └── results/            # Analysis results
@@ -151,6 +152,27 @@ AIP_MODEL=llama-3-70b
 LLM_TEMPERATURE=0.3
 LLM_MAX_TOKENS=4000
 LLM_TIMEOUT=120
+
+# Local Ollama Defaults
+OLLAMA_BASE_URL=http://localhost:11434/v1
+OLLAMA_MODEL=llama3.1
+```
+
+### Endpoint Profiles
+
+In the **⚙️ Configuration** page, choose between:
+- **AIP (from .env)**: Uses the `.env` values and discovers models from the endpoint.
+- **Local Ollama**: No API key required; model list is fetched from the local instance.
+- **Custom OpenAI-compatible**: Provide base URL, API key, and select a model.
+
+### Example Tasks
+
+Add YAML files under `example_tasks/` with optional data source defaults:
+
+```yaml
+title: HR Diagram
+question: Create an HR diagram for open cluster NGC 2516
+data_source: gaia.aip.de
 ```
 
 ### Agent Temperature Settings

@@ -14,7 +14,7 @@ Successfully implemented a complete, production-ready multi-agent astronomy work
 - **WorkflowConfig**: Dataclass for workflow settings
   - Output/results directories
   - Max retries, verbose logging
-- Environment variable loading from .env file
+- Environment variable loading from .env file (via `python-dotenv`)
 - Automatic directory initialization
 
 #### 2. Agent System (agents.py)
@@ -78,7 +78,7 @@ Three-page interface:
 **Page 1: New Workflow**
 - Research question input (text area)
 - Data source selector (dropdown)
-- Example questions (buttons)
+- Example questions loaded from YAML files in `example_tasks/`
 - Advanced options (expandable):
   - LLM temperature slider
   - Max retries input
@@ -98,7 +98,9 @@ Three-page interface:
   - Review tab
 
 **Page 3: Configuration**
-- LLM endpoint details (read-only)
+- LLM endpoint profiles (AIP, local Ollama, custom OpenAI-compatible)
+- Model list discovery from the selected endpoint
+- Active endpoint/model display
 - Workflow settings (read-only)
 - API key configuration instructions
 - System information
@@ -122,14 +124,14 @@ All tests pass successfully.
 - **README.md**: Full documentation with architecture, installation, usage
 - **QUICKSTART.md**: Step-by-step getting started guide
 - **.env.example**: Configuration template
-- **requirements.txt**: All dependencies with version constraints
+- **requirements.txt**: Dependencies (unpinned)
 - **Makefile**: Convenience commands (`make build`, `make up`, `make down`, `make clean`, `make status`)
+- **example_tasks/**: YAML example task definitions
+- **.streamlit/config.toml**: Streamlit auto-rerun on save
 
-### Technology Versions
-- CrewAI ≥0.80.0
-- Streamlit ≥1.32.0
-- Pydantic ≥2.6.0
-- OpenAI ≥1.60.0
+### Dependencies
+- CrewAI, Streamlit, Pydantic, OpenAI, LiteLLM
+- PyYAML for example task configuration
 - Python 3.12+
 
 ### Code Quality
@@ -145,8 +147,9 @@ All tests pass successfully.
 - Python files: 4 (config.py, agents.py, workflow.py, app.py)
 - Test files: 1 (test_components.py)
 - Documentation: 3 (README.md, QUICKSTART.md, .env.example)
-- Total lines of code: ~1,600
-- Total lines of documentation: ~400
+- Config/assets: Makefile, .streamlit/config.toml, example_tasks/*.yaml
+- Total lines of code: ~1,700
+- Total lines of documentation: ~420
 
 ### Features Delivered
 ✅ 4-agent CrewAI workflow
@@ -157,6 +160,8 @@ All tests pass successfully.
 ✅ Download functionality
 ✅ Workflow history
 ✅ Configuration management
+✅ Endpoint profile selection (AIP, local Ollama, custom)
+✅ Model discovery from endpoints
 ✅ Error handling
 ✅ Comprehensive testing
 ✅ Complete documentation

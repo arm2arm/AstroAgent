@@ -5,7 +5,7 @@
 ### Prerequisites
 
 1. **Python 3.12+** installed
-2. **Access to an OpenAI-compatible LLM endpoint** (e.g., AIP endpoint)
+2. **Access to an OpenAI-compatible LLM endpoint** (AIP or custom) or a local Ollama server
 3. **pip** package manager
 
 ### Installation Steps
@@ -35,6 +35,10 @@ Edit `.env` with your credentials:
 AIP_LLM_ENDPOINT=https://ai.aip.de/api
 AIP_API_KEY=your-actual-api-key-here
 AIP_MODEL=llama-3-70b
+
+# Local Ollama Defaults
+OLLAMA_BASE_URL=http://localhost:11434/v1
+OLLAMA_MODEL=llama3.1
 ```
 
 #### Optional: Use Makefile Shortcuts
@@ -77,7 +81,7 @@ The dashboard will open at `http://localhost:8501`
    - "Analyze the color-magnitude distribution of red giant stars in the Galactic bulge"
    - Or click one of the example questions
 
-3. **Select data source**: Gaia DR3 (default), DR2, SDSS, or 2MASS
+3. **Select data source**: Gaia DR3/DR2, SDSS, 2MASS, gaia.aip.de, data.aip.de, or numpy
 
 4. **Click** "🚀 Launch Workflow"
 
@@ -105,13 +109,13 @@ The dashboard will open at `http://localhost:8501`
 
 1. Navigate to ⚙️ **Configuration**
 2. View current settings:
-   - LLM endpoint and model
+   - LLM endpoint and model (including discovered models)
    - Workflow directories
    - System information
 
 ### Example Research Questions
 
-Try these astronomy-focused questions:
+Examples are loaded from `example_tasks/*.yaml` and can include default data sources.
 
 1. **Stellar Analysis**:
    ```
@@ -203,6 +207,8 @@ AstroAgent/
 ├── config.py           # Configuration management
 ├── requirements.txt    # Dependencies
 ├── .env               # Your configuration (create from .env.example)
+├── example_tasks/      # YAML example tasks
+├── .streamlit/         # Streamlit config
 ├── test_components.py  # Component tests
 └── outputs/
     ├── workflows/      # Generated Python scripts

@@ -5,6 +5,8 @@ Production-ready UI with clean design
 import streamlit as st
 import os
 import sys
+import yaml
+import requests
 from datetime import datetime
 from pathlib import Path
 
@@ -59,8 +61,150 @@ if 'current_workflow' not in st.session_state:
     st.session_state.current_workflow = None
 
 
+def load_example_tasks(task_dir: Path) -> list[dict]:
+    """Load example tasks from YAML files."""
+    tasks = []
+    if not task_dir.exists():
+        return tasks
+
+    for task_file in sorted(task_dir.glob("*.yaml")):
+        try:
+            with task_file.open("r", encoding="utf-8") as handle:
+                data = yaml.safe_load(handle) or {}
+        except Exception:
+            continue
+
+        title = (data.get("title") or task_file.stem).strip()
+        question = (data.get("question") or "").strip()
+        data_source = (data.get("data_source") or "").strip()
+
+        if question:
+            tasks.append({
+                "title": title,
+                "question": question,
+                "data_source": data_source
+            })
+
+    return tasks
+
+
+def init_llm_session_state():
+    """Initialize LLM selection defaults from environment."""
+    env_config = get_llm_config()
+    env_profile = os.getenv("LLM_PROFILE", "AIP").strip().lower()
+    profile_map = {
+        "aip": "AIP (from .env)",
+        "ollama": "Local Ollama",
+        "custom": "Custom OpenAI-compatible"
+    }
+    default_profile = profile_map.get(env_profile, "AIP (from .env)")
+
+    if "env_aip_base_url" not in st.session_state:
+        st.session_state.env_aip_base_url = env_config.base_url
+    if "env_aip_model" not in st.session_state:
+        st.session_state.env_aip_model = env_config.model
+    if "env_aip_api_key" not in st.session_state:
+        st.session_state.env_aip_api_key = env_config.api_key
+
+    if "llm_profile" not in st.session_state:
+        st.session_state.llm_profile = default_profile
+    if "llm_ollama_model" not in st.session_state:
+        st.session_state.llm_ollama_model = os.getenv("OLLAMA_MODEL", "llama3.1")
+
+    if "llm_aip_model_choice" not in st.session_state:
+        st.session_state.llm_aip_model_choice = env_config.model
+    if "llm_ollama_model_choice" not in st.session_state:
+        st.session_state.llm_ollama_model_choice = st.session_state.llm_ollama_model
+
+    if "llm_ollama_base_url" not in st.session_state:
+        st.session_state.llm_ollama_base_url = os.getenv("OLLAMA_BASE_URL", "http://localhost:11434/v1")
+
+    if "llm_custom_base_url" not in st.session_state:
+        st.session_state.llm_custom_base_url = env_config.base_url
+    if "llm_custom_model" not in st.session_state:
+        st.session_state.llm_custom_model = env_config.model
+    if "llm_custom_api_key" not in st.session_state:
+        st.session_state.llm_custom_api_key = env_config.api_key
+    if "llm_custom_model_choice" not in st.session_state:
+        st.session_state.llm_custom_model_choice = st.session_state.llm_custom_model
+
+
+def apply_llm_overrides():
+    """Apply UI-selected LLM settings to environment for this session."""
+    profile = st.session_state.get("llm_profile", "AIP (from .env)")
+
+    if profile == "Local Ollama":
+        os.environ["AIP_LLM_ENDPOINT"] = st.session_state.llm_ollama_base_url
+        os.environ["AIP_API_KEY"] = ""
+        os.environ["AIP_MODEL"] = st.session_state.get(
+            "llm_ollama_model_choice",
+            st.session_state.llm_ollama_model
+        )
+        return
+
+    if profile == "Custom OpenAI-compatible":
+        os.environ["AIP_LLM_ENDPOINT"] = st.session_state.llm_custom_base_url
+        os.environ["AIP_API_KEY"] = st.session_state.llm_custom_api_key
+        os.environ["AIP_MODEL"] = st.session_state.get(
+            "llm_custom_model_choice",
+            st.session_state.llm_custom_model
+        )
+        return
+
+    os.environ["AIP_LLM_ENDPOINT"] = st.session_state.env_aip_base_url
+    os.environ["AIP_API_KEY"] = st.session_state.env_aip_api_key
+    os.environ["AIP_MODEL"] = st.session_state.get(
+        "llm_aip_model_choice",
+        st.session_state.env_aip_model
+    )
+
+
+def _models_url(base_url: str) -> str:
+    base = base_url.rstrip("/")
+    if base.endswith("/v1"):
+        return f"{base}/models"
+    return f"{base}/v1/models"
+
+
+def fetch_available_models(base_url: str, api_key: str) -> list[str]:
+    """Fetch available model IDs from an OpenAI-compatible endpoint."""
+    url = _models_url(base_url)
+    headers = {"Accept": "application/json"}
+    if api_key:
+        headers["Authorization"] = f"Bearer {api_key}"
+
+    try:
+        response = requests.get(url, headers=headers, timeout=10)
+        response.raise_for_status()
+        payload = response.json()
+        data = payload.get("data", []) if isinstance(payload, dict) else []
+        models = [item.get("id") for item in data if isinstance(item, dict)]
+        return sorted({m for m in models if m})
+    except Exception:
+        return []
+
+
+def fetch_ollama_models(base_url: str) -> list[str]:
+    """Fetch available model names from a local Ollama instance."""
+    base = base_url.rstrip("/")
+    if base.endswith("/v1"):
+        base = base[:-3]
+    url = f"{base}/api/tags"
+    try:
+        response = requests.get(url, timeout=5)
+        response.raise_for_status()
+        payload = response.json()
+        models = [m.get("name") for m in payload.get("models", []) if isinstance(m, dict)]
+        return sorted({m for m in models if m})
+    except Exception:
+        return []
+
+
 def main():
     """Main dashboard"""
+    init_llm_session_state()
+    apply_llm_overrides()
+
     # Header
     st.markdown('<div class="main-header">🔭 CrewAI Astronomy Workflows</div>', 
                 unsafe_allow_html=True)
@@ -82,6 +226,7 @@ def main():
         st.markdown("### System Status")
         llm_config = get_llm_config()
         st.success(f"✅ LLM: Ready")
+        st.info(f"🧭 Profile: {st.session_state.llm_profile}")
         st.info(f"🔗 Endpoint: {llm_config.base_url}")
         st.info(f"🤖 Model: {llm_config.model}")
         
@@ -108,15 +253,39 @@ def render_new_workflow_page():
     
     # Quick start examples
     with st.expander("💡 Example Research Questions", expanded=False):
-        examples = [
-            "Analyze the color-magnitude distribution of red giant stars in the Galactic bulge",
-            "Study the proper motion distribution of stars in the solar neighborhood",
-            "Investigate the relationship between stellar metallicity and kinematics",
-            "Create an HR diagram for open cluster NGC 2516"
-        ]
+        task_dir = Path("example_tasks")
+        examples = load_example_tasks(task_dir)
+        if not examples:
+            examples = [
+                {
+                    "title": "Example 1",
+                    "question": "Analyze the color-magnitude distribution of red giant stars in the Galactic bulge",
+                    "data_source": "gaia.aip.de"
+                },
+                {
+                    "title": "Example 2",
+                    "question": "Study the proper motion distribution of stars in the solar neighborhood",
+                    "data_source": "gaia.aip.de"
+                },
+                {
+                    "title": "Example 3",
+                    "question": "Investigate the relationship between stellar metallicity and kinematics",
+                    "data_source": "gaia.aip.de"
+                },
+                {
+                    "title": "Example 4",
+                    "question": "Create an HR diagram for open cluster NGC 2516",
+                    "data_source": "gaia.aip.de"
+                }
+            ]
+
         for i, example in enumerate(examples):
-            if st.button(f"Use Example {i+1}", key=f"ex_{i}"):
-                st.session_state.example_question = example
+            label = example.get("title") or f"Example {i+1}"
+            if st.button(label, key=f"ex_{i}"):
+                st.session_state.example_question = example["question"]
+                if example.get("data_source"):
+                    st.session_state.example_data_source = example["data_source"]
+                    st.session_state.data_source = example["data_source"]
                 st.rerun()
 
     # Research question input
@@ -132,10 +301,26 @@ def render_new_workflow_page():
     # Data source
     col1, col2 = st.columns([2, 1])
     with col1:
+        data_source_options = [
+            "gaia_dr3",
+            "gaia_dr2",
+            "sdss",
+            "2mass",
+            "gaia.aip.de",
+            "data.aip.de",
+            "numpy"
+        ]
+        if "data_source" not in st.session_state:
+            default_source = st.session_state.get("example_data_source")
+            st.session_state.data_source = default_source or data_source_options[0]
+        selected = st.session_state.data_source
+        index = data_source_options.index(selected) if selected in data_source_options else 0
         data_source = st.selectbox(
             "Data Source",
-            ["gaia_dr3", "gaia_dr2", "sdss", "2mass"],
-            help="Select the astronomical data catalog to use"
+            data_source_options,
+            index=index,
+            key="data_source",
+            help="Select the astronomical data catalog or data source to use"
         )
     
     with col2:
@@ -397,13 +582,58 @@ def render_config_page():
     # LLM Configuration
     st.markdown("### 🤖 LLM Endpoint")
     
+    st.selectbox(
+        "Endpoint Profile",
+        ["AIP (from .env)", "Local Ollama", "Custom OpenAI-compatible"],
+        key="llm_profile",
+        help="Switch between your .env settings, local Ollama, or a custom OpenAI-compatible endpoint."
+    )
+
+    if st.session_state.llm_profile == "Local Ollama":
+        st.text_input("Ollama Base URL", key="llm_ollama_base_url")
+        ollama_models = fetch_ollama_models(st.session_state.llm_ollama_base_url)
+        if ollama_models:
+            selected = st.session_state.get("llm_ollama_model_choice", ollama_models[0])
+            index = ollama_models.index(selected) if selected in ollama_models else 0
+            st.selectbox("Ollama Model", ollama_models, index=index, key="llm_ollama_model_choice")
+        else:
+            st.text_input("Ollama Model", key="llm_ollama_model_choice")
+        st.caption("Local Ollama does not require an API key.")
+    elif st.session_state.llm_profile == "Custom OpenAI-compatible":
+        st.text_input("Endpoint URL", key="llm_custom_base_url")
+        st.text_input("API Key", key="llm_custom_api_key", type="password")
+        custom_models = fetch_available_models(
+            st.session_state.llm_custom_base_url,
+            st.session_state.llm_custom_api_key
+        )
+        if custom_models:
+            selected = st.session_state.get("llm_custom_model_choice", custom_models[0])
+            index = custom_models.index(selected) if selected in custom_models else 0
+            st.selectbox("Model", custom_models, index=index, key="llm_custom_model_choice")
+        else:
+            st.text_input("Model", key="llm_custom_model_choice")
+    else:
+        st.text_input("Endpoint URL", value=st.session_state.env_aip_base_url, disabled=True)
+        aip_models = fetch_available_models(
+            st.session_state.env_aip_base_url,
+            st.session_state.env_aip_api_key
+        )
+        if aip_models:
+            selected = st.session_state.get("llm_aip_model_choice", aip_models[0])
+            index = aip_models.index(selected) if selected in aip_models else 0
+            st.selectbox("Model", aip_models, index=index, key="llm_aip_model_choice")
+        else:
+            st.text_input("Model", value=st.session_state.env_aip_model, disabled=True)
+        st.text_input("API Key", value="(from .env)", disabled=True)
+
+    apply_llm_overrides()
     llm_config = get_llm_config()
-    
+
     col1, col2 = st.columns(2)
     
     with col1:
-        st.text_input("Endpoint URL", value=llm_config.base_url, disabled=True)
-        st.text_input("Model", value=llm_config.model, disabled=True)
+        st.text_input("Active Endpoint", value=llm_config.base_url, disabled=True)
+        st.text_input("Active Model", value=llm_config.model, disabled=True)
     
     with col2:
         st.number_input("Temperature", value=llm_config.temperature, disabled=True)
@@ -411,7 +641,7 @@ def render_config_page():
     
     with st.expander("🔐 API Key Configuration"):
         st.markdown("""
-        To configure your AIP API key, set the environment variable:
+        For the AIP endpoint, set your API key via environment variables or `.env`:
         
         ```bash
         export AIP_API_KEY="your-api-key-here"
@@ -424,6 +654,8 @@ def render_config_page():
         AIP_API_KEY=your-api-key-here
         AIP_MODEL=llama-3-70b
         ```
+
+        Local Ollama does not require an API key.
         """)
     
     # Workflow Configuration

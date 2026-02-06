@@ -144,6 +144,10 @@ ENV/
 env.bak/
 venv.bak/
 
+# Streamlit runtime artifacts
+.streamlit.pid
+.streamlit.log
+
 # Spyder project settings
 .spyderproject
 .spyproject

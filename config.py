@@ -5,13 +5,19 @@ import os
 from dataclasses import dataclass
 from typing import Optional
 
+from dotenv import load_dotenv
+
+
+# Load .env once at import time so config reads updated values.
+load_dotenv()
+
 
 @dataclass
 class LLMConfig:
     """LLM endpoint configuration"""
-    base_url: str = "https://ai.aip.de/api"
+    base_url: str = "http://localhost:11434/v1"
     api_key: str = "aip-local-key"  # Your AIP API key
-    model: str = "llama-3-70b"  # Available model at AIP
+    model: str = "qwen3-coder:latest"  # Available model at AIP
     temperature: float = 0.3
     max_tokens: int = 4000
     timeout: int = 120
