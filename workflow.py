@@ -27,6 +27,7 @@ from typing import Any, Dict, List, Optional
 from crewai import Crew, Process, Task
 from crewai.flow.flow import Flow, listen, router, start
 from pydantic import BaseModel, Field
+import inspect
 
 from agents import (
     create_analyst_agent,
@@ -34,8 +35,16 @@ from agents import (
     create_executor_agent,
     create_planner_agent,
     create_reviewer_agent,
+    create_summarizer_agent,
 )
-from config import get_execution_config, get_workflow_config
+from config import (
+    get_execution_config,
+    get_workflow_config,
+    get_llm_config,
+    get_memory_config,
+)
+from memory_store import get_memory_store
+from token_budget import build_budget, estimate_tokens, truncate_text
 
 
 # ---------------------------------------------------------------------------
@@ -112,6 +121,8 @@ class AstronomyWorkflow(Flow[WorkflowState]):
         # __init__ calls dir(self)/getattr which triggers @property accessors.
         self.wf_config = get_workflow_config()
         self.exec_config = get_execution_config()
+        self.mem_config = get_memory_config()
+        self.memory = None
 
         # Agents (created lazily via @property)
         self._planner = None
@@ -119,6 +130,7 @@ class AstronomyWorkflow(Flow[WorkflowState]):
         self._coder = None
         self._executor = None
         self._reviewer = None
+        self._summarizer = None
 
         super().__init__(state=state)
 
@@ -127,6 +139,18 @@ class AstronomyWorkflow(Flow[WorkflowState]):
             self.wf_config.results_dir, self.state.workflow_id
         )
         os.makedirs(self._results_dir, exist_ok=True)
+
+        if self.mem_config.enabled:
+            self.memory = get_memory_store(
+                db_path=self.mem_config.db_path,
+                model=get_llm_config().model,
+            )
+            self.memory.index_paths(
+                self.mem_config.index_paths,
+                source="docs",
+                chunk_tokens=self.mem_config.chunk_tokens,
+                force=self.mem_config.force_reindex,
+            )
 
         # Honour workflow-config max iterations
         self.state.max_iterations = self.wf_config.max_review_iterations
@@ -163,6 +187,121 @@ class AstronomyWorkflow(Flow[WorkflowState]):
             self._reviewer = create_reviewer_agent()
         return self._reviewer
 
+    @property
+    def summarizer(self):
+        if self._summarizer is None:
+            self._summarizer = create_summarizer_agent()
+        return self._summarizer
+
+    # -- internal helpers ---------------------------------------------------
+
+    def _make_crew(self, agents: list, tasks: list[Task]) -> Crew:
+        """Create a Crew instance with optional memory support if available."""
+        crew_kwargs = {
+            "agents": agents,
+            "tasks": tasks,
+            "process": Process.sequential,
+            "verbose": self.wf_config.verbose,
+        }
+        try:
+            sig = inspect.signature(Crew)
+            if "memory" in sig.parameters:
+                crew_kwargs["memory"] = True
+        except Exception:
+            pass
+        return Crew(**crew_kwargs)
+
+    def _apply_token_budget(self, task: Task, agents: list) -> None:
+        """Set per-task max_tokens based on prompt length and context window."""
+        llm_cfg = get_llm_config()
+        prompt = f"{task.description}\n\nExpected Output:\n{task.expected_output}"
+        budget = build_budget(
+            text=prompt,
+            model=llm_cfg.model,
+            context_window=llm_cfg.context_window,
+            default_budget=llm_cfg.output_budget,
+            safety_margin=llm_cfg.safety_margin,
+        )
+        for agent in agents:
+            if getattr(agent, "llm", None) is not None:
+                agent.llm.max_tokens = budget.max_output_tokens
+        if budget.max_output_tokens < llm_cfg.output_budget:
+            print(
+                "   >> Token budget capped: "
+                f"prompt={budget.prompt_tokens}, "
+                f"max_output={budget.max_output_tokens}, "
+                f"context_window={llm_cfg.context_window}"
+            )
+
+    def _summarize_if_needed(self, text: str, label: str) -> str:
+        """Summarize long text to keep prompts within context windows."""
+        if not text:
+            return text
+        llm_cfg = get_llm_config()
+        token_count = estimate_tokens(text, model=llm_cfg.model)
+        if token_count <= llm_cfg.summary_trigger_tokens:
+            return text
+
+        max_prompt_tokens = max(
+            256,
+            llm_cfg.context_window - llm_cfg.safety_margin - llm_cfg.output_budget,
+        )
+        if token_count > max_prompt_tokens:
+            text = truncate_text(text, max_prompt_tokens, model=llm_cfg.model)
+
+        task = Task(
+            description=(
+                f"Summarize the following {label} into <= {llm_cfg.summary_target_tokens} tokens. "
+                "Preserve constraints, data details, and actionable steps. "
+                "Output concise bullet points.\n\n"
+                f"CONTENT:\n{text}"
+            ),
+            expected_output="Concise bullet summary.",
+            agent=self.summarizer,
+        )
+        self._apply_token_budget(task, [self.summarizer])
+        crew = self._make_crew([self.summarizer], [task])
+        result = crew.kickoff()
+        return result.raw
+
+    def _retrieve_memory(self, label: str, query: str) -> str:
+        if not self.memory or not query:
+            return ""
+
+        items = self.memory.search(query, top_k=self.mem_config.top_k)
+        if not items:
+            return ""
+
+        snippets: list[str] = []
+        for item in items:
+            header_parts = [p for p in [item.source, item.path] if p]
+            header = " / ".join(header_parts)
+            snippet = item.content.strip()
+            if header:
+                snippets.append(f"[{header}]\n{snippet}")
+            else:
+                snippets.append(snippet)
+
+        combined = "\n\n".join(snippets)
+        combined = self._summarize_if_needed(combined, f"retrieved memory for {label}")
+        return f"Relevant memory:\n{combined}\n"
+
+    def _store_memory(self, kind: str, text: str) -> None:
+        if not self.memory or not text:
+            return
+        metadata = {
+            "workflow_id": self.state.workflow_id,
+            "data_source": self.state.data_source,
+            "kind": kind,
+        }
+        self.memory.add_text(
+            text=text,
+            source="workflow",
+            path=f"{self.state.workflow_id}/{kind}",
+            metadata=metadata,
+            chunk_tokens=self.mem_config.chunk_tokens,
+        )
+
     # ======================================================================
     # Phase 0 -- classify
     # ======================================================================
@@ -183,6 +322,21 @@ class AstronomyWorkflow(Flow[WorkflowState]):
     @router(classify_task)
     def route_by_complexity(self) -> str:
         c = self.state.task_complexity
+        if c < 0:
+            # Unknown complexity: default to simple path for short, direct
+            # questions; complex for longer research-style questions.
+            q = self.state.research_question.lower()
+            simple_keywords = [
+                "plot", "draw", "chart", "graph", "sine", "sin ",
+                "cos ", "cosine", "hello", "print", "calculate",
+                "generate a", "create a", "show", "visuali",
+            ]
+            if any(kw in q for kw in simple_keywords) or len(q.split()) <= 12:
+                c = 1
+            else:
+                c = 5
+            self.state.task_complexity = c
+            print(f"   >> Auto-detected complexity = {c}")
         if 0 <= c <= COMPLEXITY_THRESHOLD:
             print(f"   >> SIMPLE path (complexity {c} <= {COMPLEXITY_THRESHOLD})")
             return "simple_path"
@@ -199,11 +353,17 @@ class AstronomyWorkflow(Flow[WorkflowState]):
         print("\n--- Planning Analysis...")
         self.state.status = "planning"
 
+        memory_context = self._retrieve_memory(
+            "planning",
+            f"{self.state.research_question} {self.state.data_source}",
+        )
+
         task = Task(
             description=(
                 f'Create a detailed analysis plan for this research question:\n'
                 f'"{self.state.research_question}"\n\n'
                 f'Data source: {self.state.data_source}\n\n'
+                f'{memory_context}\n'
                 'Your plan should include:\n'
                 '1. Data selection criteria (which columns, filters)\n'
                 '2. Sample size considerations\n'
@@ -215,12 +375,8 @@ class AstronomyWorkflow(Flow[WorkflowState]):
             agent=self.planner,
         )
 
-        crew = Crew(
-            agents=[self.planner],
-            tasks=[task],
-            process=Process.sequential,
-            verbose=self.wf_config.verbose,
-        )
+        self._apply_token_budget(task, [self.planner])
+        crew = self._make_crew([self.planner], [task])
         result = crew.kickoff()
         self.state.analysis_plan = result.raw
         return {"analysis_plan": self.state.analysis_plan}
@@ -231,10 +387,16 @@ class AstronomyWorkflow(Flow[WorkflowState]):
         print("\n--- Designing Statistical Analysis...")
         self.state.status = "analyzing"
 
+        memory_context = self._retrieve_memory(
+            "analysis",
+            f"{self.state.research_question} {self.state.data_source}",
+        )
+
         task = Task(
             description=(
                 f'Design the statistical analysis approach for this plan:\n\n'
                 f'{self.state.analysis_plan}\n\n'
+                f'{memory_context}\n'
                 'Specify:\n'
                 '1. Statistical methods to use\n'
                 '2. Visualization strategies (plots, diagrams)\n'
@@ -246,12 +408,8 @@ class AstronomyWorkflow(Flow[WorkflowState]):
             agent=self.analyst,
         )
 
-        crew = Crew(
-            agents=[self.analyst],
-            tasks=[task],
-            process=Process.sequential,
-            verbose=self.wf_config.verbose,
-        )
+        self._apply_token_budget(task, [self.analyst])
+        crew = self._make_crew([self.analyst], [task])
         result = crew.kickoff()
         self.state.statistical_approach = result.raw
         return {"statistical_approach": self.state.statistical_approach}
@@ -275,21 +433,39 @@ class AstronomyWorkflow(Flow[WorkflowState]):
         print("\n--- Generating Python Code...")
         self.state.status = "coding"
 
-        # Build context from whatever is available
+        # Build context from whatever is available (summarize if too large)
         context_parts: list[str] = []
         if self.state.analysis_plan:
-            context_parts.append(f"Analysis Plan:\n{self.state.analysis_plan}")
+            plan = self._summarize_if_needed(self.state.analysis_plan, "analysis plan")
+            context_parts.append(f"Analysis Plan:\n{plan}")
         if self.state.statistical_approach:
-            context_parts.append(f"Statistical Methods:\n{self.state.statistical_approach}")
+            methods = self._summarize_if_needed(
+                self.state.statistical_approach, "statistical methods"
+            )
+            context_parts.append(f"Statistical Methods:\n{methods}")
+
+        memory_context = self._retrieve_memory(
+            "coding",
+            f"{self.state.research_question} {self.state.data_source}",
+        )
+        if memory_context:
+            context_parts.append(memory_context.strip())
         context = "\n\n".join(context_parts) or "(no additional context)"
 
         # If this is a revision, include the review feedback
         revision_hint = ""
         if self.state.iterations > 0 and self.state.review_report:
+            review_text = self._summarize_if_needed(
+                self.state.review_report, "review feedback"
+            )
+            exec_text = self._summarize_if_needed(
+                (self.state.execution_stdout or self.state.execution_stderr),
+                "execution output",
+            )
             revision_hint = (
                 f"\n\n--- REVISION ROUND {self.state.iterations} ---\n"
-                f"Previous code had these issues:\n{self.state.review_report}\n"
-                f"Previous execution output:\n{self.state.execution_stdout or self.state.execution_stderr}\n"
+                f"Previous code had these issues:\n{review_text}\n"
+                f"Previous execution output:\n{exec_text}\n"
                 "Fix ALL issues listed above.\n"
             )
 
@@ -302,25 +478,28 @@ class AstronomyWorkflow(Flow[WorkflowState]):
                 f'Data source: {self.state.data_source}\n\n'
                 f'{context}'
                 f'{revision_hint}\n\n'
-                f'Requirements:\n'
+                f'CRITICAL requirements:\n'
                 f'- Use ONLY these libraries (already installed): {pre_install}\n'
                 f'- PRINT all key results to stdout\n'
-                f'- Save plots to files with matplotlib.pyplot.savefig() '
-                f'  (use Agg backend: matplotlib.use("Agg"))\n'
+                f'- For plots: use matplotlib with Agg backend:\n'
+                f'    import matplotlib\n'
+                f'    matplotlib.use("Agg")\n'
+                f'    import matplotlib.pyplot as plt\n'
+                f'- Save ALL plots to the CURRENT WORKING DIRECTORY, e.g.:\n'
+                f'    plt.savefig("plot.png", dpi=150, bbox_inches="tight")\n'
+                f'- After saving, print the filename: print("SAVED: plot.png")\n'
                 f'- Include proper error handling\n'
-                f'- Make it executable as a script (if __name__ == "__main__")\n\n'
-                f'Return ONLY the Python code, nothing else.'
+                f'- The script must work standalone (no external data files)\n'
+                f'- For simple tasks like plotting math functions, use numpy\n'
+                f'  to generate data directly — do NOT fetch remote data.\n\n'
+                f'Return ONLY the Python code inside a ```python code fence.'
             ),
             expected_output="Complete executable Python script",
             agent=self.coder,
         )
 
-        crew = Crew(
-            agents=[self.coder],
-            tasks=[task],
-            process=Process.sequential,
-            verbose=self.wf_config.verbose,
-        )
+        self._apply_token_budget(task, [self.coder])
+        crew = self._make_crew([self.coder], [task])
         result = crew.kickoff()
         self.state.generated_code = _extract_code_block(result.raw)
         self._save_code()
@@ -343,30 +522,56 @@ class AstronomyWorkflow(Flow[WorkflowState]):
         print("\n--- Executing Code in Docker Sandbox...")
         self.state.status = "executing"
 
+        # Clean up any leftover code-interpreter container from previous runs
+        try:
+            import docker as docker_lib
+            client = docker_lib.from_env()
+            try:
+                old = client.containers.get("code-interpreter")
+                old.remove(force=True)
+                print("   >> Removed stale code-interpreter container")
+            except docker_lib.errors.NotFound:
+                pass
+        except Exception:
+            pass  # docker SDK not required — tool handles it internally
+
         pre_install = ", ".join(self.exec_config.pre_install)
+        # Escape the code for embedding in the task description
+        escaped_code = self.state.generated_code.replace('\\', '\\\\').replace('`', '\\`')
 
         task = Task(
             description=(
-                'Execute the following Python code using the Code Interpreter tool.\n'
-                'Do NOT modify the code -- run it exactly as given.\n'
-                'Report the COMPLETE stdout output and any errors.\n\n'
-                f'Libraries already installed: {pre_install}\n\n'
-                f'```python\n{self.state.generated_code}\n```'
+                'You have a single tool: Code Interpreter.\n'
+                'Use it to execute the Python code below.\n\n'
+                'INSTRUCTIONS:\n'
+                '1. Call the code_interpreter tool with the EXACT code below '
+                'as the "code" argument.\n'
+                '2. For "libraries_used" pass: '
+                f'[{chr(34) + (chr(34) + ", " + chr(34)).join(self.exec_config.pre_install) + chr(34)}]\n'
+                '3. Do NOT modify, summarize or rewrite the code.\n'
+                '4. Return the COMPLETE output from the tool.\n\n'
+                f'CODE TO EXECUTE:\n'
+                f'{escaped_code}'
             ),
             expected_output=(
-                "Full stdout output from executing the code, "
-                "or the complete error traceback if it failed."
+                "The complete stdout/stderr output from running the code."
             ),
             agent=self.executor,
         )
 
-        crew = Crew(
-            agents=[self.executor],
-            tasks=[task],
-            process=Process.sequential,
-            verbose=self.wf_config.verbose,
-        )
-        result = crew.kickoff()
+        self._apply_token_budget(task, [self.executor])
+        crew = self._make_crew([self.executor], [task])
+
+        # Change CWD to results dir so CodeInterpreterTool bind-mounts it
+        # into the Docker container at /workspace — any files saved by the
+        # script will appear here on the host.
+        os.makedirs(self._results_dir, exist_ok=True)
+        prev_cwd = os.getcwd()
+        os.chdir(self._results_dir)
+        try:
+            result = crew.kickoff()
+        finally:
+            os.chdir(prev_cwd)
 
         output = result.raw or ""
         if "error" in output.lower() or "traceback" in output.lower():
@@ -402,17 +607,27 @@ class AstronomyWorkflow(Flow[WorkflowState]):
         self.state.status = "reviewing"
 
         exec_summary = self.state.execution_stdout or self.state.execution_stderr or "(no output)"
+        exec_summary = self._summarize_if_needed(exec_summary, "execution output")
+
+        memory_context = self._retrieve_memory(
+            "review",
+            f"{self.state.research_question} {self.state.data_source}",
+        )
 
         task = Task(
             description=(
                 f'Review this Python code AND its execution output.\n\n'
                 f'--- CODE ---\n{self.state.generated_code}\n\n'
                 f'--- EXECUTION OUTPUT ---\n{exec_summary}\n\n'
+                f'{memory_context}\n'
                 'Check:\n'
                 '1. Did the code execute without errors?\n'
-                '2. Are the results scientifically reasonable?\n'
-                '3. Code quality, style, error handling\n'
-                '4. Are plots saved correctly?\n\n'
+                '2. Are the results reasonable and correct?\n'
+                '3. Are plots saved to files (not shown interactively)?\n'
+                '4. Does stdout contain meaningful output?\n\n'
+                'IMPORTANT: If the code ran successfully and produced correct '
+                'results, mark it APPROVED. Only reject if there are real '
+                'errors or clearly wrong results.\n\n'
                 'End your review with EXACTLY one of these verdicts on its own line:\n'
                 'APPROVED\n'
                 'NEEDS REVISION\n\n'
@@ -424,12 +639,8 @@ class AstronomyWorkflow(Flow[WorkflowState]):
             agent=self.reviewer,
         )
 
-        crew = Crew(
-            agents=[self.reviewer],
-            tasks=[task],
-            process=Process.sequential,
-            verbose=self.wf_config.verbose,
-        )
+        self._apply_token_budget(task, [self.reviewer])
+        crew = self._make_crew([self.reviewer], [task])
         result = crew.kickoff()
         self.state.review_report = result.raw
 
@@ -493,6 +704,17 @@ class AstronomyWorkflow(Flow[WorkflowState]):
         self.state.status = "completed"
         self._save_code()
         self._save_readme()
+
+        self._store_memory("question", self.state.research_question)
+        self._store_memory("analysis_plan", self.state.analysis_plan or "")
+        self._store_memory("statistical_approach", self.state.statistical_approach or "")
+        self._store_memory("generated_code", self.state.generated_code or "")
+        if self.state.execution_stdout:
+            self._store_memory("execution_stdout", self.state.execution_stdout)
+        if self.state.execution_stderr:
+            self._store_memory("execution_stderr", self.state.execution_stderr)
+        if self.state.review_report:
+            self._store_memory("review_report", self.state.review_report)
 
         print(f"\n>>> Workflow {self.state.workflow_id} completed!")
         print(f"   Iterations: {self.state.iterations}")

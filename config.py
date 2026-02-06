@@ -18,6 +18,8 @@ class LLMProfile:
     base_url: str
     api_key: str
     model: str
+    context_window: int = 32768
+    output_budget: int = 8192
 
 
 @dataclass
@@ -29,6 +31,11 @@ class LLMConfig:
     temperature: float = 0.3
     max_tokens: int = 4000
     timeout: int = 120
+    context_window: int = 32768
+    output_budget: int = 8192
+    safety_margin: int = 512
+    summary_trigger_tokens: int = 2000
+    summary_target_tokens: int = 600
 
 
 @dataclass
@@ -52,6 +59,22 @@ class WorkflowConfig:
     verbose: bool = True
 
 
+@dataclass
+class MemoryConfig:
+    """SQLite memory configuration for retrieval-augmented context."""
+    enabled: bool = True
+    db_path: str = ".crewai/memory_astroagent.db"
+    index_paths: list[str] = field(default_factory=lambda: [
+        "README.md",
+        "QUICKSTART.md",
+        "project.md",
+        "example_tasks",
+    ])
+    chunk_tokens: int = 400
+    top_k: int = 4
+    force_reindex: bool = False
+
+
 def load_llm_profiles() -> list[LLMProfile]:
     """Scan environment for LLM_N_* profiles and return them in order."""
     profiles: list[LLMProfile] = []
@@ -62,7 +85,18 @@ def load_llm_profiles() -> list[LLMProfile]:
         base_url = os.getenv(f"LLM_{i}_BASE_URL", "")
         api_key = os.getenv(f"LLM_{i}_API_KEY", "")
         model = os.getenv(f"LLM_{i}_MODEL", "")
-        profiles.append(LLMProfile(name=name, base_url=base_url, api_key=api_key, model=model))
+        context_window = int(os.getenv(f"LLM_{i}_CONTEXT_WINDOW", "32768"))
+        output_budget = int(os.getenv(f"LLM_{i}_OUTPUT_BUDGET", "8192"))
+        profiles.append(
+            LLMProfile(
+                name=name,
+                base_url=base_url,
+                api_key=api_key,
+                model=model,
+                context_window=context_window,
+                output_budget=output_budget,
+            )
+        )
     return profiles
 
 
@@ -74,7 +108,12 @@ def get_llm_config() -> LLMConfig:
         model=os.getenv("LLM_MODEL", "qwen3-coder:latest"),
         temperature=float(os.getenv("LLM_TEMPERATURE", "0.3")),
         max_tokens=int(os.getenv("LLM_MAX_TOKENS", "4000")),
-        timeout=int(os.getenv("LLM_TIMEOUT", "120"))
+        timeout=int(os.getenv("LLM_TIMEOUT", "120")),
+        context_window=int(os.getenv("LLM_CONTEXT_WINDOW", "32768")),
+        output_budget=int(os.getenv("LLM_OUTPUT_BUDGET", "8192")),
+        safety_margin=int(os.getenv("LLM_SAFETY_MARGIN", "512")),
+        summary_trigger_tokens=int(os.getenv("LLM_SUMMARY_TRIGGER_TOKENS", "2000")),
+        summary_target_tokens=int(os.getenv("LLM_SUMMARY_TARGET_TOKENS", "600")),
     )
 
 
@@ -100,6 +139,24 @@ def get_workflow_config() -> WorkflowConfig:
         output_dir=os.getenv("OUTPUT_DIR", "outputs/workflows"),
         results_dir=os.getenv("RESULTS_DIR", "outputs/results"),
         verbose=os.getenv("VERBOSE", "true").lower() == "true"
+    )
+
+
+def get_memory_config() -> MemoryConfig:
+    """Load memory/RAG configuration."""
+    enabled = os.getenv("MEMORY_ENABLED", "true").lower() in {"1", "true", "yes"}
+    raw_paths = os.getenv(
+        "MEMORY_INDEX_PATHS",
+        "README.md,QUICKSTART.md,project.md,example_tasks",
+    )
+    index_paths = [p.strip() for p in raw_paths.split(",") if p.strip()]
+    return MemoryConfig(
+        enabled=enabled,
+        db_path=os.getenv("MEMORY_DB_PATH", ".crewai/memory_astroagent.db"),
+        index_paths=index_paths,
+        chunk_tokens=int(os.getenv("MEMORY_CHUNK_TOKENS", "400")),
+        top_k=int(os.getenv("MEMORY_TOP_K", "4")),
+        force_reindex=os.getenv("MEMORY_FORCE_REINDEX", "false").lower() in {"1", "true", "yes"},
     )
 
 

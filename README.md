@@ -148,6 +148,11 @@ LLM_MODEL=qwen3-coder:latest
 LLM_TEMPERATURE=0.3
 LLM_MAX_TOKENS=4000
 LLM_TIMEOUT=120
+LLM_CONTEXT_WINDOW=32768
+LLM_OUTPUT_BUDGET=8192
+LLM_SAFETY_MARGIN=512
+LLM_SUMMARY_TRIGGER_TOKENS=2000
+LLM_SUMMARY_TARGET_TOKENS=600
 ```
 
 Any OpenAI-compatible /v1 endpoint works: Ollama, vLLM, LiteLLM proxy, etc.  
@@ -182,18 +187,35 @@ MAX_RETRIES=3
 VERBOSE=true
 ```
 
+### Memory / RAG Settings
+
+AstroAgent can store and retrieve prior workflow context using a local SQLite
+database with FTS5 search. This is optional and enabled by default.
+
+```bash
+MEMORY_ENABLED=true
+MEMORY_DB_PATH=.crewai/memory_astroagent.db
+MEMORY_INDEX_PATHS=README.md,QUICKSTART.md,project.md,example_tasks
+MEMORY_CHUNK_TOKENS=400
+MEMORY_TOP_K=4
+MEMORY_FORCE_REINDEX=false
+```
+
 ## Development
 
 ### Make Commands
 
-Common tasks are available via `make`:
+Running `make` with no arguments shows all available commands:
 
 ```bash
-make build   # Install dependencies
-make up      # Start Streamlit in the background
-make down    # Stop Streamlit started by make up
-make status  # Check Streamlit status
-make clean   # Remove outputs and local run artifacts
+make           # Show help with all available commands
+make build     # Install Python dependencies
+make up        # Start Streamlit server in the background
+make down      # Stop Streamlit server
+make logs      # Tail the Streamlit log file
+make status    # Show Streamlit process status
+make restart   # Stop + start Streamlit server
+make clean     # Remove outputs and local artifacts
 ```
 
 `make up` writes logs to `.streamlit.log` and stores the PID in `.streamlit.pid`.

@@ -5,9 +5,10 @@ streamlit
 pydantic
 
 # LLM and API
-litellm
+litellm[proxy]
 openai
 requests
+tiktoken
 
 # Data handling
 pandas

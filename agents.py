@@ -19,7 +19,7 @@ from config import get_llm_config, get_execution_config
 # LLM helper
 # ---------------------------------------------------------------------------
 
-def create_llm(temperature: float = 0.3) -> LLM:
+def create_llm(temperature: float = 0.3, max_tokens_override: int | None = None) -> LLM:
     """Create LLM instance for an OpenAI-compatible endpoint."""
     config = get_llm_config()
     return LLM(
@@ -27,7 +27,7 @@ def create_llm(temperature: float = 0.3) -> LLM:
         base_url=config.base_url,
         api_key=config.api_key or "no-key-required",
         temperature=temperature,
-        max_tokens=config.max_tokens,
+        max_tokens=max_tokens_override if max_tokens_override is not None else config.max_tokens,
         timeout=config.timeout,
     )
 
@@ -98,17 +98,23 @@ def create_coder_agent() -> Agent:
     return Agent(
         role="Scientific Programmer",
         goal=(
-            "Generate clean, self-contained, executable Python code for "
-            "astronomy analysis. The code MUST print its key results to "
-            "stdout and save any plots to files."
+            "Generate clean, self-contained, executable Python code. "
+            "The code MUST print its key results to stdout and save any "
+            "plots to files using plt.savefig()."
         ),
         backstory=(
             "You are an expert Python programmer specializing in scientific "
-            "computing. You write clean, well-documented code using astropy, "
-            "pandas, matplotlib, and numpy. You always include error "
-            "handling, logging, and follow PEP 8 standards. Your code is "
-            "designed to run headless — plots are saved to files with "
-            "matplotlib.pyplot.savefig(), never shown interactively."
+            "computing and data visualization. You write clean, well-"
+            "documented code using numpy, matplotlib, pandas, and astropy.\n"
+            "Key rules:\n"
+            "- Always set matplotlib.use('Agg') BEFORE importing pyplot\n"
+            "- Save plots with plt.savefig('name.png', dpi=150, "
+            "bbox_inches='tight')\n"
+            "- Print 'SAVED: name.png' after saving each plot\n"
+            "- Never call plt.show()\n"
+            "- For simple tasks (plotting functions, basic calculations) "
+            "generate data with numpy — do NOT fetch remote data\n"
+            "- Return ONLY code inside a ```python fence"
         ),
         llm=create_llm(temperature=0.2),
         verbose=True,
@@ -159,6 +165,22 @@ def create_reviewer_agent() -> Agent:
             "as actionable bullet points."
         ),
         llm=create_llm(temperature=0.3),
+        verbose=True,
+        allow_delegation=False,
+    )
+
+
+def create_summarizer_agent() -> Agent:
+    """Summarization agent to compress long context."""
+    return Agent(
+        role="Context Summarizer",
+        goal="Condense long context into concise, actionable summaries.",
+        backstory=(
+            "You specialize in summarizing technical context for downstream agents. "
+            "You preserve key requirements, constraints, and data details while "
+            "removing repetition and fluff."
+        ),
+        llm=create_llm(temperature=0.2),
         verbose=True,
         allow_delegation=False,
     )

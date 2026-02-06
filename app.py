@@ -2,8 +2,13 @@
 Streamlit Dashboard for CrewAI Astronomy Workflows
 Production-ready UI with clean design
 """
-import streamlit as st
 import os
+
+# Disable CrewAI telemetry to avoid signal handling in background threads.
+os.environ.setdefault("CREWAI_TELEMETRY_ENABLED", "false")
+os.environ.setdefault("CREWAI_DISABLE_TELEMETRY", "true")
+
+import streamlit as st
 import sys
 import yaml
 import requests
@@ -15,6 +20,7 @@ import io
 import queue
 import threading
 import time
+import logging
 
 from workflow import WorkflowState, AstronomyWorkflow
 from config import (
@@ -55,6 +61,36 @@ st.markdown(
     .status-completed { color: green; font-weight: bold; }
     .status-failed    { color: red;   font-weight: bold; }
     .status-running   { color: orange; font-weight: bold; }
+    /* Full-width log area */
+    .stExpander [data-testid="stExpanderDetails"] {
+        max-width: 100%;
+    }
+    .log-output {
+        background-color: #0e1117;
+        color: #e0e0e0;
+        font-family: 'Fira Code', 'Consolas', 'Courier New', monospace;
+        font-size: 0.82rem;
+        line-height: 1.45;
+        padding: 1rem;
+        border-radius: 0.5rem;
+        overflow-x: auto;
+        white-space: pre-wrap;
+        word-break: break-word;
+        max-height: 600px;
+        overflow-y: auto;
+        width: 100%;
+        box-sizing: border-box;
+    }
+    /* Force the Live Agent Output expander to break out to full viewport width */
+    [data-testid="stExpander"]:has(.log-output) {
+        width: 100vw;
+        position: relative;
+        left: 50%;
+        margin-left: -50vw;
+        padding-left: 1rem;
+        padding-right: 1rem;
+        box-sizing: border-box;
+    }
 </style>
 """,
     unsafe_allow_html=True,
@@ -100,15 +136,27 @@ def load_example_tasks(task_dir: Path) -> list[dict]:
     return tasks
 
 
+def _escape_html(text: str) -> str:
+    """Escape HTML special chars so raw agent output renders safely."""
+    return (
+        text.replace("&", "&amp;")
+        .replace("<", "&lt;")
+        .replace(">", "&gt;")
+        .replace('"', "&quot;")
+    )
+
+
 class _QueueWriter(io.TextIOBase):
     """Write text to a queue for live UI streaming."""
 
     def __init__(self, target_queue: queue.Queue) -> None:
         self._queue = target_queue
 
-    def write(self, text: str) -> int:
+    def write(self, text) -> int:
         if text:
-            self._queue.put(text)
+            if isinstance(text, bytes):
+                text = text.decode("utf-8", errors="replace")
+            self._queue.put(str(text))
         return len(text)
 
     def flush(self) -> None:
@@ -129,6 +177,9 @@ def run_with_live_output(
     writer = _QueueWriter(output_queue)
 
     def target() -> None:
+        # Suppress CrewAI telemetry signal-handler warnings when running
+        # in a background thread (signal registration is main-thread only).
+        logging.getLogger("crewai.telemetry").setLevel(logging.CRITICAL)
         try:
             with contextlib.redirect_stdout(writer), contextlib.redirect_stderr(writer):
                 result_container["result"] = func()
@@ -144,14 +195,24 @@ def run_with_live_output(
         try:
             chunk = output_queue.get(timeout=0.1)
             output_chunks.append(chunk)
-            placeholder.markdown("".join(output_chunks) or "_Working..._")
+            combined = "".join(output_chunks)
+            placeholder.markdown(
+                f'<div class="log-output">{_escape_html(combined)}</div>',
+                unsafe_allow_html=True,
+            )
         except queue.Empty:
             if not output_chunks:
                 placeholder.markdown("_Working..._")
             time.sleep(0.05)
 
     stream_text = "".join(output_chunks).strip()
-    placeholder.markdown(stream_text or "_No live output available._")
+    if stream_text:
+        placeholder.markdown(
+            f'<div class="log-output">{_escape_html(stream_text)}</div>',
+            unsafe_allow_html=True,
+        )
+    else:
+        placeholder.markdown("_No live output available._")
 
     if "error" in error_container:
         raise error_container["error"]
@@ -185,7 +246,14 @@ def _active_profile():
         return profiles[idx]
     cfg = get_llm_config()
     from config import LLMProfile
-    return LLMProfile(name="default", base_url=cfg.base_url, api_key=cfg.api_key, model=cfg.model)
+    return LLMProfile(
+        name="default",
+        base_url=cfg.base_url,
+        api_key=cfg.api_key,
+        model=cfg.model,
+        context_window=cfg.context_window,
+        output_budget=cfg.output_budget,
+    )
 
 
 def apply_llm_overrides():
@@ -194,9 +262,14 @@ def apply_llm_overrides():
     base_url = profile.base_url.rstrip("/")
     if not base_url.endswith("/v1"):
         base_url = f"{base_url}/v1"
+    api_key = profile.api_key or "no-key-required"
     os.environ["LLM_BASE_URL"] = base_url
-    os.environ["LLM_API_KEY"] = profile.api_key or ""
+    os.environ["LLM_API_KEY"] = api_key
     os.environ["LLM_MODEL"] = st.session_state.get("llm_model_choice", profile.model)
+    os.environ["LLM_CONTEXT_WINDOW"] = str(profile.context_window)
+    os.environ["LLM_OUTPUT_BUDGET"] = str(profile.output_budget)
+    # LiteLLM / openai client also reads OPENAI_API_KEY directly
+    os.environ["OPENAI_API_KEY"] = api_key
 
 
 def fetch_available_models(base_url: str, api_key: str) -> list[str]:
@@ -654,7 +727,14 @@ def render_history_page():
                 st.markdown(workflow.get("review_report") or "_No review._")
 
             with tab_log:
-                st.markdown(workflow.get("stream_text") or "_No log captured._")
+                log_text = workflow.get("stream_text")
+                if log_text:
+                    st.markdown(
+                        f'<div class="log-output">{_escape_html(log_text)}</div>',
+                        unsafe_allow_html=True,
+                    )
+                else:
+                    st.markdown("_No log captured._")
 
 
 # =========================================================================
@@ -678,6 +758,8 @@ def render_config_page():
                 st.text_input("Base URL", value=p.base_url, disabled=True, key=f"cfg_url_{i}")
                 st.text_input("API Key", value="••••" if p.api_key else "(none)", disabled=True, key=f"cfg_key_{i}")
                 st.text_input("Default Model", value=p.model, disabled=True, key=f"cfg_model_{i}")
+                st.number_input("Context Window", value=p.context_window, disabled=True, key=f"cfg_ctx_{i}")
+                st.number_input("Output Budget", value=p.output_budget, disabled=True, key=f"cfg_budget_{i}")
     else:
         st.warning("No profiles found. Add `LLM_1_*` entries to your `.env` file.")
 
@@ -690,6 +772,8 @@ def render_config_page():
     with col2:
         st.number_input("Temperature", value=llm_config.temperature, disabled=True)
         st.number_input("Max Tokens", value=llm_config.max_tokens, disabled=True)
+        st.number_input("Context Window", value=llm_config.context_window, disabled=True)
+        st.number_input("Output Budget", value=llm_config.output_budget, disabled=True)
 
     with st.expander("🔐 Adding Profiles"):
         st.markdown("""

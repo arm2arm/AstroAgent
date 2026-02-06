@@ -41,12 +41,17 @@ Leave `LLM_API_KEY` empty for endpoints that do not require authentication (e.g.
 
 #### Optional: Use Makefile Shortcuts
 
+Run `make` with no arguments to see all available commands:
+
 ```bash
-make build   # Install dependencies
-make up      # Start Streamlit in the background
-make down    # Stop Streamlit started by make up
-make status  # Check Streamlit status
-make clean   # Remove outputs and local run artifacts
+make           # Show help with all available commands
+make build     # Install Python dependencies
+make up        # Start Streamlit server in the background
+make down      # Stop Streamlit server
+make logs      # Tail the Streamlit log file
+make status    # Show Streamlit process status
+make restart   # Stop + start Streamlit server
+make clean     # Remove outputs and local artifacts
 ```
 
 `make up` writes logs to `.streamlit.log` and stores the PID in `.streamlit.pid`.

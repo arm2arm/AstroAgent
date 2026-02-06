@@ -126,7 +126,7 @@ All tests pass successfully.
 - **QUICKSTART.md**: Step-by-step getting started guide
 - **.env.example**: Configuration template
 - **requirements.txt**: Dependencies (unpinned)
-- **Makefile**: Convenience commands (`make build`, `make up`, `make down`, `make clean`, `make status`)
+- **Makefile**: Convenience commands (`make` shows help; `make build`, `make up`, `make down`, `make logs`, `make status`, `make restart`, `make clean`)
 - **example_tasks/**: YAML example task definitions
 - **.streamlit/config.toml**: Streamlit auto-rerun on save
 
