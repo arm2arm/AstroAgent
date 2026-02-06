@@ -1,4 +1,18 @@
 {
-    "python-envs.defaultEnvManager": "ms-python.python:conda",
-    "python-envs.pythonProjects": []
+    "python-envs.pythonProjects": [],
+    "chat.tools.terminal.autoApprove": {
+        "docker run": true,
+        "/^cd /workspaces/AstroAgent && python3 test_components\\.py$/": {
+            "approve": true,
+            "matchCommandLine": true
+        },
+        "/^cd /workspaces/AstroAgent && python3 -c \"\nfrom crewai\\.flow\\.flow import Flow\nimport inspect\n# Check if Flow uses Pydantic BaseModel\nfor cls in inspect\\.getmro\\(Flow\\):\n    print\\(cls\\)\nprint\\('---'\\)\n# Check model_config\nif hasattr\\(Flow, 'model_config'\\):\n    print\\('model_config:', Flow\\.model_config\\)\n\"$/": {
+            "approve": true,
+            "matchCommandLine": true
+        },
+        "/^cd /workspaces/AstroAgent && python3 -c \"\nfrom workflow import WorkflowState, AstronomyWorkflow\nstate = WorkflowState\\(research_question='Test', data_source='numpy', task_complexity=2\\)\nwf = AstronomyWorkflow\\(state=state\\)\nprint\\('planner prop:', wf\\._planner\\)   # should be None\nprint\\('analyst prop:', wf\\._analyst\\)   # should be None\nprint\\('state\\.status:', wf\\.state\\.status\\)\nprint\\('OK - AstronomyWorkflow instantiates without error'\\)\n\"$/": {
+            "approve": true,
+            "matchCommandLine": true
+        }
+    }
 }

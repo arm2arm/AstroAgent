@@ -1,0 +1,4 @@
+title: Sin vs Cos Plot
+question: Plot a sine curve in solid blue and a cosine curve in red dash-dotted lines on the same axes, from 0 to 2π. Add a legend, axis labels, title, and grid. Save the figure as sin_vs_cos.png.
+data_source: numpy
+complexity: 1

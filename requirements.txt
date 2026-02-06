@@ -20,3 +20,5 @@ matplotlib
 # Utilities
 python-dotenv
 pyyaml
+docker
+scipy

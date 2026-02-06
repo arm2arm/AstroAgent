@@ -32,9 +32,21 @@ class LLMConfig:
 
 
 @dataclass
+class ExecutionConfig:
+    """Code-execution Docker environment configuration."""
+    mode: str = "image"                          # "image" or "dockerfile"
+    image: str = "python:3.12-slim"              # remote image (when mode=image)
+    dockerfile_path: str = "./Dockerfile.executor"  # local Dockerfile (when mode=dockerfile)
+    pre_install: list[str] = field(default_factory=lambda: [
+        "numpy", "pandas", "matplotlib", "astropy", "scipy"
+    ])
+
+
+@dataclass
 class WorkflowConfig:
     """Workflow execution configuration"""
     max_retries: int = 3
+    max_review_iterations: int = 3
     output_dir: str = "outputs/workflows"
     results_dir: str = "outputs/results"
     verbose: bool = True
@@ -66,10 +78,25 @@ def get_llm_config() -> LLMConfig:
     )
 
 
+def get_execution_config() -> ExecutionConfig:
+    """Load code-execution environment configuration."""
+    pre_install_str = os.getenv(
+        "EXEC_PRE_INSTALL",
+        "numpy,pandas,matplotlib,astropy,scipy"
+    )
+    return ExecutionConfig(
+        mode=os.getenv("EXEC_MODE", "image"),
+        image=os.getenv("EXEC_IMAGE", "python:3.12-slim"),
+        dockerfile_path=os.getenv("EXEC_DOCKERFILE", "./Dockerfile.executor"),
+        pre_install=[p.strip() for p in pre_install_str.split(",") if p.strip()],
+    )
+
+
 def get_workflow_config() -> WorkflowConfig:
     """Load workflow configuration"""
     return WorkflowConfig(
         max_retries=int(os.getenv("MAX_RETRIES", "3")),
+        max_review_iterations=int(os.getenv("MAX_REVIEW_ITERATIONS", "3")),
         output_dir=os.getenv("OUTPUT_DIR", "outputs/workflows"),
         results_dir=os.getenv("RESULTS_DIR", "outputs/results"),
         verbose=os.getenv("VERBOSE", "true").lower() == "true"

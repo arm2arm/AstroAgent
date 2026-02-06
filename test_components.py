@@ -54,7 +54,8 @@ def test_agents():
             create_planner_agent,
             create_analyst_agent,
             create_coder_agent,
-            create_reviewer_agent
+            create_executor_agent,
+            create_reviewer_agent,
         )
         
         # Note: We don't actually instantiate agents here as they need LLM connection
@@ -62,6 +63,7 @@ def test_agents():
         print("  Planner agent function: OK")
         print("  Analyst agent function: OK")
         print("  Coder agent function: OK")
+        print("  Executor agent function: OK")
         print("  Reviewer agent function: OK")
         
         print("✅ Agent definitions are correct")
