@@ -5,7 +5,7 @@
 ### Prerequisites
 
 1. **Python 3.12+** installed
-2. **Access to an OpenAI-compatible LLM endpoint** (AIP or custom) or a local Ollama server
+2. **Access to any OpenAI-compatible /v1 LLM endpoint** (Ollama, vLLM, LiteLLM, etc.)
 3. **pip** package manager
 
 ### Installation Steps
@@ -29,17 +29,15 @@ Copy the example environment file and edit it:
 cp .env.example .env
 ```
 
-Edit `.env` with your credentials:
+Edit `.env` with your endpoint:
 
 ```env
-AIP_LLM_ENDPOINT=https://ai.aip.de/api
-AIP_API_KEY=your-actual-api-key-here
-AIP_MODEL=llama-3-70b
-
-# Local Ollama Defaults
-OLLAMA_BASE_URL=http://localhost:11434/v1
-OLLAMA_MODEL=llama3.1
+LLM_BASE_URL=http://localhost:11434/v1
+LLM_API_KEY=
+LLM_MODEL=qwen3-coder:latest
 ```
+
+Leave `LLM_API_KEY` empty for endpoints that do not require authentication (e.g. local Ollama).
 
 #### Optional: Use Makefile Shortcuts
 
@@ -165,7 +163,7 @@ If you see LLM connection errors:
 
 ```bash
 # Test your API endpoint
-curl -H "Authorization: Bearer $AIP_API_KEY" https://ai.aip.de/api/models
+curl $LLM_BASE_URL/models
 ```
 
 Verify your `.env` file has the correct credentials.

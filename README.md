@@ -10,8 +10,8 @@ AstroAgent is a production-ready AI-powered workflow system that automatically d
 
 - **4 Specialized AI Agents**: Planner, Analyst, Coder, and Reviewer working in sequence
 - **Interactive Streamlit Dashboard**: Clean UI for workflow creation and monitoring
-- **Flexible LLM Support**: AIP endpoint, local Ollama, or custom OpenAI-compatible endpoints
-- **Endpoint Model Discovery**: Choose from available models in the UI
+- **Flexible LLM Support**: Any OpenAI-compatible /v1 endpoint (Ollama, vLLM, LiteLLM, etc.)
+- **Endpoint Model Discovery**: Auto-discover and select available models in the UI
 - **Astronomy-Focused**: Built for Gaia DR3, DR2, SDSS, and 2MASS data analysis
 - **Complete Outputs**: Generates executable Python scripts with documentation
 
@@ -42,7 +42,7 @@ AstroAgent is a production-ready AI-powered workflow system that automatically d
 ### Prerequisites
 
 - Python 3.12 or higher
-- Access to an OpenAI-compatible LLM endpoint
+- Access to any OpenAI-compatible /v1 LLM endpoint (Ollama, vLLM, LiteLLM, etc.)
 - pip package manager
 
 ### Setup
@@ -65,11 +65,11 @@ AstroAgent is a production-ready AI-powered workflow system that automatically d
    cp .env.example .env
    ```
    
-   Edit `.env` and set your API credentials:
+   Edit `.env` and set your endpoint:
    ```bash
-   AIP_LLM_ENDPOINT=https://ai.aip.de/api
-   AIP_API_KEY=your-api-key-here
-   AIP_MODEL=llama-3-70b
+   LLM_BASE_URL=http://localhost:11434/v1
+   LLM_API_KEY=
+   LLM_MODEL=qwen3-coder:latest
    ```
 
 4. **Run the application**
@@ -139,31 +139,21 @@ AstroAgent/
 Configure in `.env`:
 
 ```bash
-# Endpoint
-AIP_LLM_ENDPOINT=https://ai.aip.de/api
-
-# Authentication
-AIP_API_KEY=your-key
-
-# Model
-AIP_MODEL=llama-3-70b
+# OpenAI-compatible /v1 endpoint
+LLM_BASE_URL=http://localhost:11434/v1
+LLM_API_KEY=
+LLM_MODEL=qwen3-coder:latest
 
 # Parameters
 LLM_TEMPERATURE=0.3
 LLM_MAX_TOKENS=4000
 LLM_TIMEOUT=120
-
-# Local Ollama Defaults
-OLLAMA_BASE_URL=http://localhost:11434/v1
-OLLAMA_MODEL=llama3.1
 ```
 
-### Endpoint Profiles
+Any OpenAI-compatible /v1 endpoint works: Ollama, vLLM, LiteLLM proxy, etc.  
+Leave `LLM_API_KEY` empty for endpoints that do not require authentication.
 
-In the **⚙️ Configuration** page, choose between:
-- **AIP (from .env)**: Uses the `.env` values and discovers models from the endpoint.
-- **Local Ollama**: No API key required; model list is fetched from the local instance.
-- **Custom OpenAI-compatible**: Provide base URL, API key, and select a model.
+The **⚙️ Configuration** page lets you change the endpoint, API key, and model at runtime. Available models are auto-discovered from the `/v1/models` route.
 
 ### Example Tasks
 
@@ -234,8 +224,8 @@ isort .
 **Problem**: Cannot connect to LLM endpoint
 
 **Solution**: 
-- Verify `AIP_LLM_ENDPOINT` and `AIP_API_KEY` in `.env`
-- Test connection: `curl -H "Authorization: Bearer $AIP_API_KEY" https://ai.aip.de/api/models`
+- Verify `LLM_BASE_URL` and `LLM_API_KEY` in `.env`
+- Test connection: `curl $LLM_BASE_URL/models`
 
 ### Agent Timeouts
 

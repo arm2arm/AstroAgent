@@ -2,8 +2,7 @@
 Configuration for CrewAI Astronomy Workflow System
 """
 import os
-from dataclasses import dataclass
-from typing import Optional
+from dataclasses import dataclass, field
 
 from dotenv import load_dotenv
 
@@ -13,11 +12,20 @@ load_dotenv()
 
 
 @dataclass
+class LLMProfile:
+    """A single LLM endpoint profile."""
+    name: str
+    base_url: str
+    api_key: str
+    model: str
+
+
+@dataclass
 class LLMConfig:
-    """LLM endpoint configuration"""
+    """Active LLM endpoint configuration (OpenAI-compatible /v1)"""
     base_url: str = "http://localhost:11434/v1"
-    api_key: str = "aip-local-key"  # Your AIP API key
-    model: str = "qwen3-coder:latest"  # Available model at AIP
+    api_key: str = ""
+    model: str = "qwen3-coder:latest"
     temperature: float = 0.3
     max_tokens: int = 4000
     timeout: int = 120
@@ -32,13 +40,29 @@ class WorkflowConfig:
     verbose: bool = True
 
 
+def load_llm_profiles() -> list[LLMProfile]:
+    """Scan environment for LLM_N_* profiles and return them in order."""
+    profiles: list[LLMProfile] = []
+    for i in range(1, 20):
+        name = os.getenv(f"LLM_{i}_NAME")
+        if not name:
+            break
+        base_url = os.getenv(f"LLM_{i}_BASE_URL", "")
+        api_key = os.getenv(f"LLM_{i}_API_KEY", "")
+        model = os.getenv(f"LLM_{i}_MODEL", "")
+        profiles.append(LLMProfile(name=name, base_url=base_url, api_key=api_key, model=model))
+    return profiles
+
+
 def get_llm_config() -> LLMConfig:
-    """Load LLM configuration from environment"""
+    """Load active LLM configuration from environment"""
     return LLMConfig(
-        base_url=os.getenv("AIP_LLM_ENDPOINT", "https://ai.aip.de/api"),
-        api_key=os.getenv("AIP_API_KEY", "your-key-here"),
-        model=os.getenv("AIP_MODEL", "llama-3-70b"),
-        temperature=float(os.getenv("LLM_TEMPERATURE", "0.3"))
+        base_url=os.getenv("LLM_BASE_URL", "http://localhost:11434/v1"),
+        api_key=os.getenv("LLM_API_KEY", ""),
+        model=os.getenv("LLM_MODEL", "qwen3-coder:latest"),
+        temperature=float(os.getenv("LLM_TEMPERATURE", "0.3")),
+        max_tokens=int(os.getenv("LLM_MAX_TOKENS", "4000")),
+        timeout=int(os.getenv("LLM_TIMEOUT", "120"))
     )
 
 

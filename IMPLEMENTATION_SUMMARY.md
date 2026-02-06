@@ -9,7 +9,7 @@ Successfully implemented a complete, production-ready multi-agent astronomy work
 
 #### 1. Configuration System (config.py)
 - **LLMConfig**: Dataclass for LLM endpoint configuration
-  - Base URL, API key, model name
+  - Base URL (`LLM_BASE_URL`), API key (`LLM_API_KEY`), model name (`LLM_MODEL`)
   - Temperature, max tokens, timeout settings
 - **WorkflowConfig**: Dataclass for workflow settings
   - Output/results directories
@@ -98,8 +98,9 @@ Three-page interface:
   - Review tab
 
 **Page 3: Configuration**
-- LLM endpoint profiles (AIP, local Ollama, custom OpenAI-compatible)
-- Model list discovery from the selected endpoint
+- Single OpenAI-compatible /v1 endpoint configuration
+- Editable base URL, API key, and model
+- Model list auto-discovery from the endpoint
 - Active endpoint/model display
 - Workflow settings (read-only)
 - API key configuration instructions
@@ -160,8 +161,8 @@ All tests pass successfully.
 ✅ Download functionality
 ✅ Workflow history
 ✅ Configuration management
-✅ Endpoint profile selection (AIP, local Ollama, custom)
-✅ Model discovery from endpoints
+✅ Single OpenAI-compatible /v1 endpoint
+✅ Model discovery from endpoint
 ✅ Error handling
 ✅ Comprehensive testing
 ✅ Complete documentation

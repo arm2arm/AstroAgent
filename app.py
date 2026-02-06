@@ -7,11 +7,17 @@ import os
 import sys
 import yaml
 import requests
+from importlib import metadata
 from datetime import datetime
 from pathlib import Path
+import contextlib
+import io
+import queue
+import threading
+import time
 
 from workflow import WorkflowState, AstronomyWorkflow
-from config import get_llm_config, get_workflow_config, init_directories
+from config import get_llm_config, get_workflow_config, init_directories, load_llm_profiles
 
 # Initialize
 init_directories()
@@ -88,87 +94,107 @@ def load_example_tasks(task_dir: Path) -> list[dict]:
     return tasks
 
 
+class _QueueWriter(io.TextIOBase):
+    """Write text to a queue for live UI streaming."""
+
+    def __init__(self, target_queue: queue.Queue) -> None:
+        self._queue = target_queue
+
+    def write(self, text: str) -> int:
+        if text:
+            self._queue.put(text)
+        return len(text)
+
+    def flush(self) -> None:
+        return None
+
+
+def run_with_live_output(func, placeholder: st.delta_generator.DeltaGenerator) -> tuple[object, str]:
+    """Run a function in a thread and stream stdout/stderr to the UI."""
+    output_queue: queue.Queue = queue.Queue()
+    output_chunks: list[str] = []
+    done = threading.Event()
+    result_container: dict = {}
+    error_container: dict = {}
+
+    writer = _QueueWriter(output_queue)
+
+    def target() -> None:
+        try:
+            with contextlib.redirect_stdout(writer), contextlib.redirect_stderr(writer):
+                result_container["result"] = func()
+        except Exception as exc:
+            error_container["error"] = exc
+        finally:
+            done.set()
+
+    thread = threading.Thread(target=target, daemon=True)
+    thread.start()
+
+    while not done.is_set() or not output_queue.empty():
+        try:
+            chunk = output_queue.get(timeout=0.1)
+            output_chunks.append(chunk)
+            placeholder.markdown("".join(output_chunks) or "_Working..._")
+        except queue.Empty:
+            if not output_chunks:
+                placeholder.markdown("_Working..._")
+            time.sleep(0.05)
+
+    stream_text = "".join(output_chunks).strip()
+    placeholder.markdown(stream_text or "_No live output available._")
+
+    if "error" in error_container:
+        raise error_container["error"]
+
+    return result_container.get("result"), stream_text
+
+
 def init_llm_session_state():
-    """Initialize LLM selection defaults from environment."""
-    env_config = get_llm_config()
-    env_profile = os.getenv("LLM_PROFILE", "AIP").strip().lower()
-    profile_map = {
-        "aip": "AIP (from .env)",
-        "ollama": "Local Ollama",
-        "custom": "Custom OpenAI-compatible"
-    }
-    default_profile = profile_map.get(env_profile, "AIP (from .env)")
+    """Initialize LLM session defaults from .env profiles."""
+    profiles = load_llm_profiles()
+    if "llm_profiles" not in st.session_state:
+        st.session_state.llm_profiles = profiles
+    if "llm_profile_idx" not in st.session_state:
+        st.session_state.llm_profile_idx = 0
+    if "llm_model_choice" not in st.session_state:
+        if profiles:
+            st.session_state.llm_model_choice = profiles[0].model
+        else:
+            st.session_state.llm_model_choice = get_llm_config().model
 
-    if "env_aip_base_url" not in st.session_state:
-        st.session_state.env_aip_base_url = env_config.base_url
-    if "env_aip_model" not in st.session_state:
-        st.session_state.env_aip_model = env_config.model
-    if "env_aip_api_key" not in st.session_state:
-        st.session_state.env_aip_api_key = env_config.api_key
 
-    if "llm_profile" not in st.session_state:
-        st.session_state.llm_profile = default_profile
-    if "llm_ollama_model" not in st.session_state:
-        st.session_state.llm_ollama_model = os.getenv("OLLAMA_MODEL", "llama3.1")
-
-    if "llm_aip_model_choice" not in st.session_state:
-        st.session_state.llm_aip_model_choice = env_config.model
-    if "llm_ollama_model_choice" not in st.session_state:
-        st.session_state.llm_ollama_model_choice = st.session_state.llm_ollama_model
-
-    if "llm_ollama_base_url" not in st.session_state:
-        st.session_state.llm_ollama_base_url = os.getenv("OLLAMA_BASE_URL", "http://localhost:11434/v1")
-
-    if "llm_custom_base_url" not in st.session_state:
-        st.session_state.llm_custom_base_url = env_config.base_url
-    if "llm_custom_model" not in st.session_state:
-        st.session_state.llm_custom_model = env_config.model
-    if "llm_custom_api_key" not in st.session_state:
-        st.session_state.llm_custom_api_key = env_config.api_key
-    if "llm_custom_model_choice" not in st.session_state:
-        st.session_state.llm_custom_model_choice = st.session_state.llm_custom_model
+def _active_profile():
+    """Return the currently selected profile (or a fallback)."""
+    profiles = st.session_state.get("llm_profiles", [])
+    idx = st.session_state.get("llm_profile_idx", 0)
+    if profiles and 0 <= idx < len(profiles):
+        return profiles[idx]
+    # fallback: build a virtual profile from env
+    cfg = get_llm_config()
+    from config import LLMProfile
+    return LLMProfile(name="default", base_url=cfg.base_url, api_key=cfg.api_key, model=cfg.model)
 
 
 def apply_llm_overrides():
-    """Apply UI-selected LLM settings to environment for this session."""
-    profile = st.session_state.get("llm_profile", "AIP (from .env)")
-
-    if profile == "Local Ollama":
-        os.environ["AIP_LLM_ENDPOINT"] = st.session_state.llm_ollama_base_url
-        os.environ["AIP_API_KEY"] = ""
-        os.environ["AIP_MODEL"] = st.session_state.get(
-            "llm_ollama_model_choice",
-            st.session_state.llm_ollama_model
-        )
-        return
-
-    if profile == "Custom OpenAI-compatible":
-        os.environ["AIP_LLM_ENDPOINT"] = st.session_state.llm_custom_base_url
-        os.environ["AIP_API_KEY"] = st.session_state.llm_custom_api_key
-        os.environ["AIP_MODEL"] = st.session_state.get(
-            "llm_custom_model_choice",
-            st.session_state.llm_custom_model
-        )
-        return
-
-    os.environ["AIP_LLM_ENDPOINT"] = st.session_state.env_aip_base_url
-    os.environ["AIP_API_KEY"] = st.session_state.env_aip_api_key
-    os.environ["AIP_MODEL"] = st.session_state.get(
-        "llm_aip_model_choice",
-        st.session_state.env_aip_model
-    )
-
-
-def _models_url(base_url: str) -> str:
-    base = base_url.rstrip("/")
-    if base.endswith("/v1"):
-        return f"{base}/models"
-    return f"{base}/v1/models"
+    """Apply active profile + selected model to runtime environment."""
+    profile = _active_profile()
+    base_url = profile.base_url.rstrip("/")
+    if not base_url.endswith("/v1"):
+        base_url = f"{base_url}/v1"
+    os.environ["LLM_BASE_URL"] = base_url
+    os.environ["LLM_API_KEY"] = profile.api_key or ""
+    os.environ["LLM_MODEL"] = st.session_state.get("llm_model_choice", profile.model)
 
 
 def fetch_available_models(base_url: str, api_key: str) -> list[str]:
-    """Fetch available model IDs from an OpenAI-compatible endpoint."""
-    url = _models_url(base_url)
+    """Fetch available model IDs from an OpenAI-compatible /v1 endpoint."""
+    base = base_url.rstrip("/")
+    if base.endswith("/v1"):
+        url = f"{base}/models"
+    else:
+        url = f"{base}/v1/models"
+
     headers = {"Accept": "application/json"}
     if api_key:
         headers["Authorization"] = f"Bearer {api_key}"
@@ -179,22 +205,6 @@ def fetch_available_models(base_url: str, api_key: str) -> list[str]:
         payload = response.json()
         data = payload.get("data", []) if isinstance(payload, dict) else []
         models = [item.get("id") for item in data if isinstance(item, dict)]
-        return sorted({m for m in models if m})
-    except Exception:
-        return []
-
-
-def fetch_ollama_models(base_url: str) -> list[str]:
-    """Fetch available model names from a local Ollama instance."""
-    base = base_url.rstrip("/")
-    if base.endswith("/v1"):
-        base = base[:-3]
-    url = f"{base}/api/tags"
-    try:
-        response = requests.get(url, timeout=5)
-        response.raise_for_status()
-        payload = response.json()
-        models = [m.get("name") for m in payload.get("models", []) if isinstance(m, dict)]
         return sorted({m for m in models if m})
     except Exception:
         return []
@@ -225,8 +235,9 @@ def main():
         # Status
         st.markdown("### System Status")
         llm_config = get_llm_config()
+        profile = _active_profile()
         st.success(f"✅ LLM: Ready")
-        st.info(f"🧭 Profile: {st.session_state.llm_profile}")
+        st.info(f"🧭 Profile: {profile.name}")
         st.info(f"🔗 Endpoint: {llm_config.base_url}")
         st.info(f"🤖 Model: {llm_config.model}")
         
@@ -250,6 +261,41 @@ def main():
 def render_new_workflow_page():
     """Render new workflow creation page"""
     st.markdown("## 🚀 Create New Workflow")
+
+    # ── Endpoint & Model selectors ──
+    profiles = st.session_state.get("llm_profiles", [])
+    if profiles:
+        profile_names = [p.name for p in profiles]
+        col_ep, col_model = st.columns([1, 1])
+        with col_ep:
+            selected_name = st.selectbox(
+                "LLM Endpoint",
+                profile_names,
+                index=st.session_state.get("llm_profile_idx", 0),
+                key="_profile_select",
+                help="Choose which OpenAI-compatible endpoint to use"
+            )
+            new_idx = profile_names.index(selected_name)
+            if new_idx != st.session_state.get("llm_profile_idx"):
+                st.session_state.llm_profile_idx = new_idx
+                # reset model choice to the profile default
+                st.session_state.llm_model_choice = profiles[new_idx].model
+                apply_llm_overrides()
+                st.rerun()
+
+        profile = _active_profile()
+
+        with col_model:
+            discovered = fetch_available_models(profile.base_url, profile.api_key)
+            if discovered:
+                current = st.session_state.get("llm_model_choice", profile.model)
+                idx = discovered.index(current) if current in discovered else 0
+                st.selectbox("Model", discovered, index=idx, key="llm_model_choice",
+                             help="Models discovered from the endpoint")
+            else:
+                st.text_input("Model", key="llm_model_choice",
+                              help="Could not discover models — enter the name manually")
+        apply_llm_overrides()
     
     # Quick start examples
     with st.expander("💡 Example Research Questions", expanded=False):
@@ -381,7 +427,13 @@ def launch_workflow(research_question: str, data_source: str):
             progress_bar.progress(25)
             
             init_result = workflow.initialize()
-            plan_result = workflow.planning_phase(init_result)
+            with plan_container:
+                st.markdown("**Live Output:**")
+                plan_stream_placeholder = st.empty()
+            plan_result, plan_stream = run_with_live_output(
+                lambda: workflow.planning_phase(init_result),
+                plan_stream_placeholder
+            )
             
             with plan_container:
                 st.markdown("**Analysis Plan:**")
@@ -391,7 +443,13 @@ def launch_workflow(research_question: str, data_source: str):
             status_text.markdown("**Status:** 📊 Designing statistical approach...")
             progress_bar.progress(50)
             
-            analysis_result = workflow.analysis_phase(plan_result)
+            with analysis_container:
+                st.markdown("**Live Output:**")
+                analysis_stream_placeholder = st.empty()
+            analysis_result, analysis_stream = run_with_live_output(
+                lambda: workflow.analysis_phase(plan_result),
+                analysis_stream_placeholder
+            )
             
             with analysis_container:
                 st.markdown("**Statistical Approach:**")
@@ -401,7 +459,13 @@ def launch_workflow(research_question: str, data_source: str):
             status_text.markdown("**Status:** 💻 Generating Python code...")
             progress_bar.progress(75)
             
-            code_result = workflow.coding_phase(analysis_result)
+            with code_container:
+                st.markdown("**Live Output:**")
+                code_stream_placeholder = st.empty()
+            code_result, code_stream = run_with_live_output(
+                lambda: workflow.coding_phase(analysis_result),
+                code_stream_placeholder
+            )
             
             with code_container:
                 st.markdown("**Generated Code:**")
@@ -411,7 +475,13 @@ def launch_workflow(research_question: str, data_source: str):
             status_text.markdown("**Status:** ✅ Reviewing code quality...")
             progress_bar.progress(90)
             
-            review_result = workflow.review_phase(code_result)
+            with review_container:
+                st.markdown("**Live Output:**")
+                review_stream_placeholder = st.empty()
+            review_result, review_stream = run_with_live_output(
+                lambda: workflow.review_phase(code_result),
+                review_stream_placeholder
+            )
             
             with review_container:
                 st.markdown("**Review Report:**")
@@ -428,6 +498,10 @@ def launch_workflow(research_question: str, data_source: str):
                 'research_question': research_question,
                 'data_source': data_source,
                 'status': 'completed',
+                'plan_stream': plan_stream,
+                'analysis_stream': analysis_stream,
+                'code_stream': code_stream,
+                'review_stream': review_stream,
                 'analysis_plan': state.analysis_plan,
                 'statistical_approach': state.statistical_approach,
                 'generated_code': state.generated_code,
@@ -519,12 +593,21 @@ def render_history_page():
             tab1, tab2, tab3, tab4 = st.tabs(["📋 Plan", "📊 Analysis", "💻 Code", "✅ Review"])
             
             with tab1:
+                if workflow.get('plan_stream'):
+                    st.markdown("**Live Output:**")
+                    st.markdown(workflow['plan_stream'])
                 st.markdown(workflow.get('analysis_plan', 'N/A'))
             
             with tab2:
+                if workflow.get('analysis_stream'):
+                    st.markdown("**Live Output:**")
+                    st.markdown(workflow['analysis_stream'])
                 st.markdown(workflow.get('statistical_approach', 'N/A'))
             
             with tab3:
+                if workflow.get('code_stream'):
+                    st.markdown("**Live Output:**")
+                    st.markdown(workflow['code_stream'])
                 if workflow.get('generated_code'):
                     st.code(workflow['generated_code'], language='python')
                     
@@ -572,6 +655,9 @@ python workflow_{workflow['workflow_id']}.py
                         )
             
             with tab4:
+                if workflow.get('review_stream'):
+                    st.markdown("**Live Output:**")
+                    st.markdown(workflow['review_stream'])
                 st.markdown(workflow.get('review_report', 'N/A'))
 
 
@@ -579,83 +665,48 @@ def render_config_page():
     """Render configuration page"""
     st.markdown("## ⚙️ Configuration")
     
-    # LLM Configuration
-    st.markdown("### 🤖 LLM Endpoint")
-    
-    st.selectbox(
-        "Endpoint Profile",
-        ["AIP (from .env)", "Local Ollama", "Custom OpenAI-compatible"],
-        key="llm_profile",
-        help="Switch between your .env settings, local Ollama, or a custom OpenAI-compatible endpoint."
-    )
-
-    if st.session_state.llm_profile == "Local Ollama":
-        st.text_input("Ollama Base URL", key="llm_ollama_base_url")
-        ollama_models = fetch_ollama_models(st.session_state.llm_ollama_base_url)
-        if ollama_models:
-            selected = st.session_state.get("llm_ollama_model_choice", ollama_models[0])
-            index = ollama_models.index(selected) if selected in ollama_models else 0
-            st.selectbox("Ollama Model", ollama_models, index=index, key="llm_ollama_model_choice")
-        else:
-            st.text_input("Ollama Model", key="llm_ollama_model_choice")
-        st.caption("Local Ollama does not require an API key.")
-    elif st.session_state.llm_profile == "Custom OpenAI-compatible":
-        st.text_input("Endpoint URL", key="llm_custom_base_url")
-        st.text_input("API Key", key="llm_custom_api_key", type="password")
-        custom_models = fetch_available_models(
-            st.session_state.llm_custom_base_url,
-            st.session_state.llm_custom_api_key
-        )
-        if custom_models:
-            selected = st.session_state.get("llm_custom_model_choice", custom_models[0])
-            index = custom_models.index(selected) if selected in custom_models else 0
-            st.selectbox("Model", custom_models, index=index, key="llm_custom_model_choice")
-        else:
-            st.text_input("Model", key="llm_custom_model_choice")
+    # LLM Profiles
+    st.markdown("### 🤖 LLM Endpoint Profiles")
+    profiles = st.session_state.get("llm_profiles", [])
+    if profiles:
+        for i, p in enumerate(profiles):
+            active = "(active)" if i == st.session_state.get("llm_profile_idx", 0) else ""
+            with st.expander(f"**{p.name}** {active}", expanded=(i == st.session_state.get("llm_profile_idx", 0))):
+                st.text_input("Base URL", value=p.base_url, disabled=True, key=f"cfg_url_{i}")
+                st.text_input("API Key", value="••••" if p.api_key else "(none)", disabled=True, key=f"cfg_key_{i}")
+                st.text_input("Default Model", value=p.model, disabled=True, key=f"cfg_model_{i}")
     else:
-        st.text_input("Endpoint URL", value=st.session_state.env_aip_base_url, disabled=True)
-        aip_models = fetch_available_models(
-            st.session_state.env_aip_base_url,
-            st.session_state.env_aip_api_key
-        )
-        if aip_models:
-            selected = st.session_state.get("llm_aip_model_choice", aip_models[0])
-            index = aip_models.index(selected) if selected in aip_models else 0
-            st.selectbox("Model", aip_models, index=index, key="llm_aip_model_choice")
-        else:
-            st.text_input("Model", value=st.session_state.env_aip_model, disabled=True)
-        st.text_input("API Key", value="(from .env)", disabled=True)
+        st.warning("No profiles found. Add `LLM_1_*` entries to your `.env` file.")
 
-    apply_llm_overrides()
     llm_config = get_llm_config()
-
+    st.markdown("### Active LLM Settings")
     col1, col2 = st.columns(2)
-    
     with col1:
         st.text_input("Active Endpoint", value=llm_config.base_url, disabled=True)
         st.text_input("Active Model", value=llm_config.model, disabled=True)
-    
     with col2:
         st.number_input("Temperature", value=llm_config.temperature, disabled=True)
         st.number_input("Max Tokens", value=llm_config.max_tokens, disabled=True)
-    
-    with st.expander("🔐 API Key Configuration"):
-        st.markdown("""
-        For the AIP endpoint, set your API key via environment variables or `.env`:
-        
-        ```bash
-        export AIP_API_KEY="your-api-key-here"
-        ```
-        
-        Or create a `.env` file:
-        
-        ```
-        AIP_LLM_ENDPOINT=https://ai.aip.de/api
-        AIP_API_KEY=your-api-key-here
-        AIP_MODEL=llama-3-70b
-        ```
 
-        Local Ollama does not require an API key.
+    with st.expander("🔐 Adding Profiles"):
+        st.markdown("""
+        Define profiles in your `.env` file using numbered keys:
+        
+        ```
+        LLM_1_NAME=Ollama Local
+        LLM_1_BASE_URL=http://localhost:11434/v1
+        LLM_1_API_KEY=
+        LLM_1_MODEL=qwen3-coder:latest
+
+        LLM_2_NAME=AIP
+        LLM_2_BASE_URL=https://ai.aip.de/api
+        LLM_2_API_KEY=your-api-key
+        LLM_2_MODEL=Qwen2.5-32B-Instruct
+        ```
+        
+        All endpoints must be OpenAI-compatible (`/v1`). Leave `API_KEY` empty for endpoints
+        that do not require authentication (e.g. local Ollama).  
+        Restart the app after editing `.env`.
         """)
     
     # Workflow Configuration
@@ -675,10 +726,22 @@ def render_config_page():
     
     # System Info
     st.markdown("### 📊 System Information")
+
+    try:
+        crewai_version = metadata.version("crewai")
+    except metadata.PackageNotFoundError:
+        crewai_version = "not installed"
+
+    try:
+        crewai_tools_version = metadata.version("crewai-tools")
+    except metadata.PackageNotFoundError:
+        crewai_tools_version = "not installed"
     
     st.markdown(f"""
     - **Python Version:** {sys.version.split()[0]}
     - **Streamlit Version:** {st.__version__}
+    - **CrewAI Version:** {crewai_version}
+    - **CrewAI Tools Version:** {crewai_tools_version}
     - **Working Directory:** `{os.getcwd()}`
     """)
 
