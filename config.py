@@ -20,7 +20,7 @@ class LLMProfile:
     model: str
     context_window: int = 32768
     output_budget: int = 8192
-    embed_model: str = ""          # embedding model name (e.g. "qwen3-embedding")
+    embed_model: str = ""          # embedding model name (e.g. "nomic-embed-text:latest")
     embed_provider: str = "ollama"  # embedding provider: "ollama", "openai", etc.
 
 
@@ -38,7 +38,7 @@ class LLMConfig:
     safety_margin: int = 512
     summary_trigger_tokens: int = 2000
     summary_target_tokens: int = 600
-    embed_model: str = "qwen3-embedding"
+    embed_model: str = "nomic-embed-text:latest"
     embed_provider: str = "ollama"
 
 
@@ -91,7 +91,7 @@ def load_llm_profiles() -> list[LLMProfile]:
         model = os.getenv(f"LLM_{i}_MODEL", "")
         context_window = int(os.getenv(f"LLM_{i}_CONTEXT_WINDOW", "32768"))
         output_budget = int(os.getenv(f"LLM_{i}_OUTPUT_BUDGET", "8192"))
-        embed_model = os.getenv(f"LLM_{i}_EMBED_MODEL", "qwen3-embedding")
+        embed_model = os.getenv(f"LLM_{i}_EMBED_MODEL", "nomic-embed-text:latest")
         embed_provider = os.getenv(f"LLM_{i}_EMBED_PROVIDER", "ollama")
         profiles.append(
             LLMProfile(
@@ -122,7 +122,7 @@ def get_llm_config() -> LLMConfig:
         safety_margin=int(os.getenv("LLM_SAFETY_MARGIN", "512")),
         summary_trigger_tokens=int(os.getenv("LLM_SUMMARY_TRIGGER_TOKENS", "2000")),
         summary_target_tokens=int(os.getenv("LLM_SUMMARY_TARGET_TOKENS", "600")),
-        embed_model=os.getenv("EMBED_MODEL", "qwen3-embedding"),
+        embed_model=os.getenv("EMBED_MODEL", "nomic-embed-text:latest"),
         embed_provider=os.getenv("EMBED_PROVIDER", "ollama"),
     )
 
@@ -146,25 +146,25 @@ def get_crewai_embedder_dict() -> dict | None:
         return {
             "provider": "ollama",
             "config": {
-                "model": cfg.embed_model,
-                "url": base,
+                "model_name": cfg.embed_model,
+                "url": f"{base}/api/embeddings",
             },
         }
     elif provider == "openai":
         return {
             "provider": "openai",
             "config": {
-                "model": cfg.embed_model,
+                "model_name": cfg.embed_model,
                 "api_key": cfg.api_key or os.getenv("OPENAI_API_KEY", ""),
                 "api_base": cfg.base_url,
             },
         }
     else:
-        # Generic provider — pass model + URL, let CrewAI handle it
+        # Generic provider — pass model_name + URL, let CrewAI handle it
         return {
             "provider": provider,
             "config": {
-                "model": cfg.embed_model,
+                "model_name": cfg.embed_model,
                 "url": base,
             },
         }

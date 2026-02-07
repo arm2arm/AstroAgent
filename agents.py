@@ -11,6 +11,7 @@ Reviewer  – validates code + results        (all paths)
 """
 from crewai import Agent, LLM
 from crewai_tools import CodeInterpreterTool
+from pydantic import BaseModel, Field
 
 from config import get_llm_config, get_execution_config
 
@@ -44,6 +45,39 @@ def create_llm(temperature: float = 0.3, max_tokens_override: int | None = None)
 # Code-execution tool (configured from .env)
 # ---------------------------------------------------------------------------
 
+class _CodeInterpreterSchemaOptional(BaseModel):
+    """Schema with optional libraries_used to avoid tool-call validation errors."""
+
+    code: str = Field(
+        ...,
+        description=(
+            "Python3 code used to be interpreted in the Docker container. "
+            "ALWAYS PRINT the final result and the output of the code"
+        ),
+    )
+    libraries_used: list[str] = Field(
+        default_factory=list,
+        description=(
+            "List of libraries used in the code with proper installing names. "
+            "Example: numpy,pandas,beautifulsoup4"
+        ),
+    )
+
+
+class _AstroCodeInterpreterTool(CodeInterpreterTool):
+    """Code Interpreter with fallback libraries list."""
+
+    args_schema: type[BaseModel] = _CodeInterpreterSchemaOptional
+
+    def __init__(self, default_libraries: list[str], **kwargs):
+        super().__init__(**kwargs)
+        self._default_libraries = list(default_libraries)
+
+    def _run(self, **kwargs):
+        if not kwargs.get("libraries_used"):
+            kwargs["libraries_used"] = list(self._default_libraries)
+        return super()._run(**kwargs)
+
 def create_code_interpreter_tool() -> CodeInterpreterTool:
     """Build a CodeInterpreterTool using .env execution settings."""
     exec_cfg = get_execution_config()
@@ -51,13 +85,15 @@ def create_code_interpreter_tool() -> CodeInterpreterTool:
     if exec_cfg.mode == "dockerfile":
         # Build from a local Dockerfile directory. The tool builds on
         # first use and caches the image as ``default_image_tag``.
-        return CodeInterpreterTool(
+        return _AstroCodeInterpreterTool(
+            default_libraries=exec_cfg.pre_install,
             user_dockerfile_path=exec_cfg.dockerfile_path,
             default_image_tag="astroagent-exec:latest",
         )
 
     # mode == "image" — use a remote / pre-pulled image directly.
-    return CodeInterpreterTool(
+    return _AstroCodeInterpreterTool(
+        default_libraries=exec_cfg.pre_install,
         default_image_tag=exec_cfg.image,
     )
 

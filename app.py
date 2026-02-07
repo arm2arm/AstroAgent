@@ -273,6 +273,13 @@ def apply_llm_overrides():
     # Embedding model config for CrewAI memory
     os.environ["EMBED_MODEL"] = profile.embed_model or ""
     os.environ["EMBED_PROVIDER"] = profile.embed_provider or "ollama"
+    # CrewAI's OllamaProvider reads these env vars directly as fallback
+    if (profile.embed_provider or "ollama").lower() == "ollama" and profile.embed_model:
+        ollama_base = base_url.rstrip("/")
+        if ollama_base.endswith("/v1"):
+            ollama_base = ollama_base[:-3]
+        os.environ["EMBEDDINGS_OLLAMA_MODEL_NAME"] = profile.embed_model
+        os.environ["EMBEDDINGS_OLLAMA_URL"] = f"{ollama_base}/api/embeddings"
     # LiteLLM / openai client also reads OPENAI_API_KEY directly
     os.environ["OPENAI_API_KEY"] = api_key
     # Ensure OpenAI-compatible clients use the correct base URL
@@ -384,9 +391,17 @@ def render_new_workflow_page():
                 st.rerun()
 
         profile = _active_profile()
+        if "model_cache" not in st.session_state:
+            st.session_state.model_cache = {}
+        cache_key = f"models_{st.session_state.get('llm_profile_idx', 0)}"
 
         with col_model:
-            discovered = fetch_available_models(profile.base_url, profile.api_key)
+            if st.button("Discover Models", key=f"discover_{cache_key}"):
+                st.session_state.model_cache[cache_key] = fetch_available_models(
+                    profile.base_url,
+                    profile.api_key,
+                )
+            discovered = st.session_state.model_cache.get(cache_key, [])
             if discovered:
                 current = st.session_state.get("llm_model_choice", profile.model)
                 idx = discovered.index(current) if current in discovered else 0

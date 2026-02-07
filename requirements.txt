@@ -1,6 +1,7 @@
 # Core dependencies
 crewai
 crewai-tools
+ollama
 streamlit
 pydantic
 
