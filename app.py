@@ -253,6 +253,10 @@ def _active_profile():
         model=cfg.model,
         context_window=cfg.context_window,
         output_budget=cfg.output_budget,
+        embed_model=cfg.embed_model,
+        embed_provider=cfg.embed_provider,
+        embed_base_url=cfg.embed_base_url,
+        embed_api_key=cfg.embed_api_key,
     )
 
 
@@ -271,9 +275,17 @@ def apply_llm_overrides():
     # Embedding model config for CrewAI memory
     os.environ["EMBED_MODEL"] = profile.embed_model or ""
     os.environ["EMBED_PROVIDER"] = profile.embed_provider or "ollama"
+    if profile.embed_base_url:
+        os.environ["EMBED_BASE_URL"] = profile.embed_base_url
+    else:
+        os.environ.pop("EMBED_BASE_URL", None)
+    if profile.embed_api_key:
+        os.environ["EMBED_API_KEY"] = profile.embed_api_key
+    else:
+        os.environ.pop("EMBED_API_KEY", None)
     # CrewAI's OllamaProvider reads these env vars directly as fallback
     if (profile.embed_provider or "ollama").lower() == "ollama" and profile.embed_model:
-        ollama_base = base_url.rstrip("/")
+        ollama_base = (profile.embed_base_url or base_url).rstrip("/")
         if ollama_base.endswith("/v1"):
             ollama_base = ollama_base[:-3]
         os.environ["EMBEDDINGS_OLLAMA_MODEL_NAME"] = profile.embed_model

@@ -151,6 +151,12 @@ LLM_OUTPUT_BUDGET=8192
 LLM_SAFETY_MARGIN=512
 LLM_SUMMARY_TRIGGER_TOKENS=2000
 LLM_SUMMARY_TARGET_TOKENS=600
+
+# Optional: embeddings endpoint (separate from LLM)
+EMBED_MODEL=nomic-embed-text:latest
+EMBED_PROVIDER=ollama
+EMBED_BASE_URL=
+EMBED_API_KEY=
 ```
 
 Any OpenAI-compatible /v1 endpoint works: Ollama, vLLM, LiteLLM proxy, etc.  

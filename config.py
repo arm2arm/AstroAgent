@@ -22,6 +22,8 @@ class LLMProfile:
     output_budget: int = 8192
     embed_model: str = ""          # embedding model name (e.g. "nomic-embed-text:latest")
     embed_provider: str = "ollama"  # embedding provider: "ollama", "openai", etc.
+    embed_base_url: str = ""       # optional separate embedding endpoint base URL
+    embed_api_key: str = ""        # optional separate embedding API key
 
 
 @dataclass
@@ -40,6 +42,8 @@ class LLMConfig:
     summary_target_tokens: int = 600
     embed_model: str = "nomic-embed-text:latest"
     embed_provider: str = "ollama"
+    embed_base_url: str = ""
+    embed_api_key: str = ""
 
 
 @dataclass
@@ -93,6 +97,8 @@ def load_llm_profiles() -> list[LLMProfile]:
         output_budget = int(os.getenv(f"LLM_{i}_OUTPUT_BUDGET", "8192"))
         embed_model = os.getenv(f"LLM_{i}_EMBED_MODEL", "nomic-embed-text:latest")
         embed_provider = os.getenv(f"LLM_{i}_EMBED_PROVIDER", "ollama")
+        embed_base_url = os.getenv(f"LLM_{i}_EMBED_BASE_URL", "")
+        embed_api_key = os.getenv(f"LLM_{i}_EMBED_API_KEY", "")
         profiles.append(
             LLMProfile(
                 name=name,
@@ -103,6 +109,8 @@ def load_llm_profiles() -> list[LLMProfile]:
                 output_budget=output_budget,
                 embed_model=embed_model,
                 embed_provider=embed_provider,
+                embed_base_url=embed_base_url,
+                embed_api_key=embed_api_key,
             )
         )
     return profiles
@@ -124,6 +132,8 @@ def get_llm_config() -> LLMConfig:
         summary_target_tokens=int(os.getenv("LLM_SUMMARY_TARGET_TOKENS", "600")),
         embed_model=os.getenv("EMBED_MODEL", "nomic-embed-text:latest"),
         embed_provider=os.getenv("EMBED_PROVIDER", "ollama"),
+        embed_base_url=os.getenv("EMBED_BASE_URL", ""),
+        embed_api_key=os.getenv("EMBED_API_KEY", ""),
     )
 
 
@@ -136,8 +146,9 @@ def get_crewai_embedder_dict() -> dict | None:
     if not cfg.embed_model:
         return None
 
+    embed_base_url = cfg.embed_base_url or cfg.base_url
     # Derive the base Ollama URL by stripping /v1 suffix
-    base = cfg.base_url.rstrip("/")
+    base = embed_base_url.rstrip("/")
     if base.endswith("/v1"):
         base = base[:-3]
 
@@ -155,8 +166,8 @@ def get_crewai_embedder_dict() -> dict | None:
             "provider": "openai",
             "config": {
                 "model_name": cfg.embed_model,
-                "api_key": cfg.api_key or os.getenv("OPENAI_API_KEY", ""),
-                "api_base": cfg.base_url,
+                "api_key": cfg.embed_api_key or cfg.api_key or os.getenv("OPENAI_API_KEY", ""),
+                "api_base": embed_base_url,
             },
         }
     else:

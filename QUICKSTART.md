@@ -35,6 +35,12 @@ Edit `.env` with your endpoint:
 LLM_BASE_URL=http://localhost:11434/v1
 LLM_API_KEY=
 LLM_MODEL=qwen3-coder:latest
+
+# Optional: embeddings endpoint (separate from LLM)
+EMBED_MODEL=nomic-embed-text:latest
+EMBED_PROVIDER=ollama
+EMBED_BASE_URL=
+EMBED_API_KEY=
 ```
 
 Leave `LLM_API_KEY` empty for endpoints that do not require authentication (e.g. local Ollama).
