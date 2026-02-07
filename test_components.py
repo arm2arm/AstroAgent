@@ -78,15 +78,13 @@ def test_workflow_state():
     print("\nTesting workflow state...")
     try:
         from workflow import WorkflowState
-        
+
         state = WorkflowState(
-            research_question="Test question",
-            data_source="gaia_dr3"
+            research_question="Test question"
         )
-        
+
         print(f"  Workflow ID: {state.workflow_id}")
         print(f"  Research Question: {state.research_question}")
-        print(f"  Data Source: {state.data_source}")
         print(f"  Status: {state.status}")
         
         print("✅ Workflow state works correctly")
