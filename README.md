@@ -152,6 +152,9 @@ LLM_SAFETY_MARGIN=512
 LLM_SUMMARY_TRIGGER_TOKENS=2000
 LLM_SUMMARY_TARGET_TOKENS=600
 
+# Optional: override model for the Executor agent
+EXECUTOR_LLM_MODEL=
+
 # Optional: embeddings endpoint (separate from LLM)
 EMBED_MODEL=nomic-embed-text:latest
 EMBED_PROVIDER=ollama

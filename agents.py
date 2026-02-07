@@ -9,6 +9,8 @@ Coder     – generates Python code           (all paths)
 Executor  – runs code in a Docker sandbox   (all paths)
 Reviewer  – validates code + results        (all paths)
 """
+import os
+
 from crewai import Agent, LLM
 from crewai_tools import CodeInterpreterTool
 from pydantic import BaseModel, Field
@@ -25,16 +27,21 @@ except Exception:
 # LLM helper
 # ---------------------------------------------------------------------------
 
-def create_llm(temperature: float = 0.3, max_tokens_override: int | None = None) -> LLM:
+def create_llm(
+    temperature: float = 0.3,
+    max_tokens_override: int | None = None,
+    model_override: str | None = None,
+) -> LLM:
     """Create LLM instance for an OpenAI-compatible endpoint.
 
     Falls back to returning a model string if the LLM wrapper cannot initialize.
     """
     config = get_llm_config()
-    if config.model.startswith(("openai/", "azure/", "ollama/")):
-        model_id = config.model
+    model_name = model_override or config.model
+    if model_name.startswith(("openai/", "azure/", "ollama/")):
+        model_id = model_name
     else:
-        model_id = f"openai/{config.model}"
+        model_id = f"openai/{model_name}"
 
     llm = LLM(
         model=model_id,
@@ -183,6 +190,7 @@ def create_coder_agent() -> Agent:
 
 def create_executor_agent() -> Agent:
     """Code execution agent — runs code in a Docker sandbox."""
+    executor_model = os.getenv("EXECUTOR_LLM_MODEL", "").strip() or None
     return Agent(
         role="Code Executor",
         goal=(
@@ -197,7 +205,7 @@ def create_executor_agent() -> Agent:
             "report the full error traceback."
         ),
         tools=[create_code_interpreter_tool()],
-        llm=create_llm(temperature=0.0),
+        llm=create_llm(temperature=0.0, model_override=executor_model),
         verbose=True,
         allow_delegation=False,
     )

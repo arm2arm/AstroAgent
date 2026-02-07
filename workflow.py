@@ -194,9 +194,9 @@ class AstronomyWorkflow(Flow[WorkflowState]):
         try:
             sig = inspect.signature(Crew)
             if "memory" in sig.parameters:
-                crew_kwargs["memory"] = True
+                crew_kwargs["memory"] = bool(self.mem_config.enabled)
             # Attach per-profile embedder when memory is enabled
-            if "embedder" in sig.parameters:
+            if self.mem_config.enabled and "embedder" in sig.parameters:
                 from config import get_crewai_embedder_dict
                 embedder = get_crewai_embedder_dict()
                 if embedder:
@@ -516,7 +516,10 @@ class AstronomyWorkflow(Flow[WorkflowState]):
                 '2. For "libraries_used" pass: '
                 f'[{chr(34) + (chr(34) + ", " + chr(34)).join(self.exec_config.pre_install) + chr(34)}]\n'
                 '3. Do NOT modify, summarize or rewrite the code.\n'
-                '4. Return the COMPLETE output from the tool.\n\n'
+                '4. Respond with a SINGLE tool call and nothing else.\n'
+                '5. The tool input MUST be valid JSON with double-quoted keys.\n'
+                '   Example format: {"code": "<CODE>", "libraries_used": ["numpy", "pandas"]}\n'
+                '6. Return the COMPLETE output from the tool.\n\n'
                 f'CODE TO EXECUTE:\n'
                 f'{escaped_code}'
             ),

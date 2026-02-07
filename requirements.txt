@@ -18,9 +18,11 @@ numpy
 # Astronomy libraries (for generated code)
 astropy
 matplotlib
+pandas
 
 # Utilities
 python-dotenv
 pyyaml
 docker
 scipy
+fastapi

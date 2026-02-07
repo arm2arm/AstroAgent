@@ -10,6 +10,6 @@ RUN apt-get update && apt-get install -y --no-install-recommends \
 
 # Pre-install scientific Python stack so per-run installs are instant
 RUN pip install --no-cache-dir \
-    numpy pandas matplotlib astropy scipy
+    numpy pandas matplotlib astropy scipy fastapi
 
 WORKDIR /workspace
