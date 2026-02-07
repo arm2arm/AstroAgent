@@ -1,5 +1,5 @@
 """
-Streamlit Dashboard for CrewAI Astronomy Workflows
+Streamlit Dashboard for CrewAI Multi-Agent Workflows
 Production-ready UI with clean design
 """
 import os
@@ -38,8 +38,8 @@ init_directories()
 
 # Page config
 st.set_page_config(
-    page_title="CrewAI Astronomy Workflows",
-    page_icon="🔭",
+    page_title="CrewAI Workflows",
+    page_icon="🧠",
     layout="wide",
     initial_sidebar_state="expanded",
 )
@@ -124,14 +124,12 @@ def load_example_tasks(task_dir: Path) -> list[dict]:
 
         title = (data.get("title") or task_file.stem).strip()
         question = (data.get("question") or "").strip()
-        data_source = (data.get("data_source") or "").strip()
         complexity = int(data.get("complexity", -1))
 
         if question:
             tasks.append({
                 "title": title,
                 "question": question,
-                "data_source": data_source,
                 "complexity": complexity,
             })
 
@@ -319,11 +317,11 @@ def main():
 
     # Header
     st.markdown(
-        '<div class="main-header">🔭 CrewAI Astronomy Workflows</div>',
+        '<div class="main-header">🧠 CrewAI Workflows</div>',
         unsafe_allow_html=True,
     )
     st.markdown(
-        '<div class="sub-header">AI-Powered Multi-Agent System for Astronomical Data Analysis</div>',
+        '<div class="sub-header">AI-Powered Multi-Agent System for Code and Data Tasks</div>',
         unsafe_allow_html=True,
     )
 
@@ -417,53 +415,34 @@ def render_new_workflow_page():
         apply_llm_overrides()
 
     # ── Example tasks ──
-    with st.expander("💡 Example Research Questions", expanded=False):
+    with st.expander("💡 Example Tasks", expanded=False):
         task_dir = Path("example_tasks")
         examples = load_example_tasks(task_dir)
         if not examples:
             examples = [
-                {"title": "Sine Plot", "question": "Generate a sine wave plot", "data_source": "numpy", "complexity": 2},
-                {"title": "HR Diagram", "question": "Create an HR diagram for open cluster NGC 2516", "data_source": "gaia.aip.de", "complexity": 5},
+                {"title": "Sine Plot", "question": "Plot sin(x) in Python and save the figure", "complexity": 2},
+                {"title": "CSV Summary", "question": "Load a CSV and summarize columns with basic stats", "complexity": 3},
             ]
 
         for i, example in enumerate(examples):
             label = example.get("title") or f"Example {i+1}"
             if st.button(label, key=f"ex_{i}"):
                 st.session_state.example_question = example["question"]
-                if example.get("data_source"):
-                    st.session_state.example_data_source = example["data_source"]
-                    st.session_state.data_source = example["data_source"]
                 st.session_state.example_complexity = example.get("complexity", -1)
                 st.rerun()
 
     # ── Research question ──
     default_question = st.session_state.get("example_question", "")
     research_question = st.text_area(
-        "Research Question",
+        "Task Request",
         value=default_question,
         height=120,
-        placeholder="Enter your astronomy research question...",
-        help="Describe what you want to analyze. Be specific.",
+        placeholder="Describe the task you want to run...",
+        help="Describe what you want to build or analyze. Be specific.",
     )
 
-    # ── Data source & complexity ──
+    # ── Task complexity ──
     col1, col2 = st.columns([2, 1])
-    with col1:
-        data_source_options = [
-            "gaia_dr3", "gaia_dr2", "sdss", "2mass",
-            "gaia.aip.de", "data.aip.de", "numpy",
-        ]
-        if "data_source" not in st.session_state:
-            default_source = st.session_state.get("example_data_source")
-            st.session_state.data_source = default_source or data_source_options[0]
-        selected = st.session_state.data_source
-        index = data_source_options.index(selected) if selected in data_source_options else 0
-        data_source = st.selectbox(
-            "Data Source", data_source_options, index=index,
-            key="data_source",
-            help="Select the astronomical data catalog to use",
-        )
-
     with col2:
         default_complexity = st.session_state.get("example_complexity", -1)
         if default_complexity < 0:
@@ -490,14 +469,14 @@ def render_new_workflow_page():
             if not research_question:
                 st.error("⚠️ Please enter a research question")
                 return
-            launch_workflow(research_question, data_source, task_complexity)
+            launch_workflow(research_question, task_complexity)
 
 
 # =========================================================================
 # Launch Workflow
 # =========================================================================
 
-def launch_workflow(research_question: str, data_source: str, task_complexity: int):
+def launch_workflow(research_question: str, task_complexity: int):
     """Launch new workflow with progress tracking and live output."""
     from workflow import WorkflowState, AstronomyWorkflow
     progress_container = st.container()
@@ -536,7 +515,6 @@ def launch_workflow(research_question: str, data_source: str, task_complexity: i
 
             state = WorkflowState(
                 research_question=research_question,
-                data_source=data_source,
                 task_complexity=task_complexity,
             )
             workflow = AstronomyWorkflow(state=state)
@@ -638,7 +616,6 @@ def launch_workflow(research_question: str, data_source: str, task_complexity: i
                 "workflow_id": state.workflow_id,
                 "timestamp": datetime.now().isoformat(),
                 "research_question": research_question,
-                "data_source": data_source,
                 "task_complexity": task_complexity,
                 "status": "completed",
                 "stream_text": stream_text,
@@ -695,7 +672,6 @@ def render_history_page():
             col1, col2 = st.columns([2, 1])
             with col1:
                 st.markdown(f"**Question:** {workflow['research_question']}")
-                st.markdown(f"**Data Source:** {workflow['data_source']}")
                 st.markdown(f"**Complexity:** {workflow.get('task_complexity', '?')}")
                 st.markdown(f"**Timestamp:** {workflow['timestamp']}")
             with col2:

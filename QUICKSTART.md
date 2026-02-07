@@ -1,6 +1,6 @@
 # Quick Start Guide
 
-## AstroAgent - CrewAI Astronomy Workflows
+## WorkflowAgent - CrewAI Multi-Agent Workflows
 
 ### Prerequisites
 
@@ -80,11 +80,9 @@ The dashboard will open at `http://localhost:8501`
 
 1. **Navigate** to 🚀 New Workflow page (default)
 
-2. **Enter a research question**, for example:
-   - "Analyze the color-magnitude distribution of red giant stars in the Galactic bulge"
-   - Or click one of the example questions
-
-3. **Select data source**: Gaia DR3/DR2, SDSS, 2MASS, gaia.aip.de, data.aip.de, or numpy
+2. **Enter a task request**, for example:
+   - "Plot sin(x) and save the figure"
+   - Or click one of the example tasks
 
 4. **Click** "🚀 Launch Workflow"
 
@@ -116,32 +114,23 @@ The dashboard will open at `http://localhost:8501`
    - Workflow directories
    - System information
 
-### Example Research Questions
+### Example Tasks
 
-Examples are loaded from `example_tasks/*.yaml` and can include default data sources.
+Examples are loaded from `example_tasks/*.yaml`.
 
-1. **Stellar Analysis**:
+1. **Sine Plot**:
    ```
-   Analyze the color-magnitude distribution of red giant stars 
-   in the Galactic bulge using Gaia DR3 data
-   ```
-
-2. **Kinematics**:
-   ```
-   Study the proper motion distribution of stars in the 
-   solar neighborhood within 100 parsecs
+   Plot sin(x) in Python and save the figure
    ```
 
-3. **HR Diagram**:
+2. **CSV Summary**:
    ```
-   Create an HR diagram for open cluster NGC 2516 and 
-   identify main sequence, giants, and white dwarfs
+   Load a CSV and summarize columns with basic stats
    ```
 
-4. **Metallicity Studies**:
+3. **API Data**:
    ```
-   Investigate the relationship between stellar metallicity 
-   and kinematics for disk stars
+   Fetch JSON from an API and visualize a key metric
    ```
 
 ### Output Files
@@ -150,11 +139,11 @@ Workflows generate two files in `outputs/workflows/`:
 
 1. **`workflow_[ID].py`**: Executable Python script
    - Complete analysis implementation
-   - Uses astropy, pandas, matplotlib
+   - Uses pandas, matplotlib (and any libraries you request)
    - Includes error handling
 
 2. **`README_[ID].md`**: Documentation
-   - Research question
+   - Task request
    - Analysis plan
    - Statistical approach
    - Usage instructions
@@ -228,9 +217,9 @@ AstroAgent/
 
 1. ✅ Create your first workflow
 2. ✅ Review the generated code
-3. ✅ Run the Python script (after installing astropy, etc.)
-4. ✅ Analyze real astronomical data!
+3. ✅ Run the Python script (install any required libraries)
+4. ✅ Use the outputs in your project
 
 ---
 
-**Happy Analyzing! 🔭**
+**Happy Building!**

@@ -1,4 +1,3 @@
 title: Sine Plot + Blob Density Map
 question: Create a clean, well-labeled sine plot in Python and a separate figure with five normally distributed Gaussian blobs. For the blob figure, compute local number density and visualize it with a log-scale color map using the jet palette, including a colorbar. Make the plots publication-quality with readable labels, titles, and grid where appropriate.
-data_source: numpy
 complexity: 2

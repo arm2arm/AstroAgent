@@ -1,14 +1,14 @@
-CrewAI Astronomy Research Workflow System
-Practical Multi-Agent System for Astronomical Data Analysis
+CrewAI Workflow System
+Practical Multi-Agent System for Code and Data Tasks
 Working Implementation Guide
 February 2026
 ________________________________________
 Executive Summary
-This document provides a complete, working implementation of a CrewAI-based multi-agent system for astronomy research workflows. The system uses a local LLM endpoint (https://ai.aip.de/api), features a production-ready Streamlit interface, and focuses on practical Gaia DR3 data analysis tasks.
+This document provides a complete, working implementation of a CrewAI-based multi-agent system for general coding and data workflows. The system uses a local LLM endpoint (https://ai.aip.de/api), features a production-ready Streamlit interface, and focuses on practical code generation and analysis tasks.
 Key Features:
 •	Simple Architecture: 4 core agents (Planner, Analyst, Coder, Reviewer)
 •	Local LLM: OpenAI-compatible endpoint at AIP
-•	Real Workflows: Gaia DR3 stellar analysis, HR diagrams, kinematics
+•	Real Workflows: Code generation, data cleanup, visualization tasks
 •	Production UI: Clean Streamlit dashboard with monitoring
 •	Fully Working: Copy-paste ready code with detailed setup
 ________________________________________
@@ -43,13 +43,13 @@ Agent Roles
 Agent	Purpose	Output
 Planner	Design analysis strategy	Analysis plan with steps
 Analyst	Statistical analysis design	Methods and approach
-Coder	Generate Python code	Complete analysis script
+Coder	Generate Python code	Complete script
 Reviewer	Code validation	Quality report
 
 ________________________________________
 2. Complete Code Implementation
 2.1 Project Structure
-astronomy-crewai/
+workflow-crewai/
 ├── app.py  # Streamlit dashboard
 ├── workflow.py  # CrewAI workflow logic
 ├── agents.py  # Agent definitions
@@ -64,7 +64,7 @@ astronomy-crewai/
 └── README_abc123.md # Documentation per workflow
 2.2 Configuration (config.py)
 """
-Configuration for CrewAI Astronomy Workflow System
+Configuration for CrewAI Workflow System
 """
 import os
 from dataclasses import dataclass
@@ -110,7 +110,7 @@ os.makedirs(config.output_dir, exist_ok=True)
 os.makedirs(config.results_dir, exist_ok=True)
 2.3 Agent Definitions (agents.py)
 """
-CrewAI Agent Definitions for Astronomy Workflows
+CrewAI Agent Definitions for Multi-Agent Workflows
 """
 from crewai import Agent
 from config import get_llm_config
@@ -136,12 +136,11 @@ def create_planner_agent() -> Agent:
 Create workflow planning agent
 """
 return Agent(
-role="Astronomy Workflow Planner",
-goal="Design optimal analysis workflows for astronomical data",
-backstory="""You are an experienced observational astronomer with expertise
-in Gaia data analysis. You excel at breaking down research questions into
-clear, executable analysis steps. You understand data selection, filtering,
-and analysis strategies for large astronomical datasets.""",
+role="Workflow Planner",
+goal="Design optimal analysis workflows for the given task",
+backstory="""You are an experienced technical planner. You excel at breaking down
+requests into clear, executable analysis steps. You understand data selection,
+filtering, and analysis strategies for a wide range of datasets.""",
 llm_config=create_llm_config(temperature=0.4),
 verbose=True,
 allow_delegation=False
@@ -153,10 +152,9 @@ Create statistical analysis agent
 return Agent(
 role="Data Analysis Specialist",
 goal="Design rigorous statistical analysis methods",
-backstory="""You are a data scientist specializing in astronomical data.
-You have deep knowledge of statistical methods, data quality assessment,
-and visualization techniques. You ensure analyses are scientifically sound
-and computationally efficient.""",
+backstory="""You are a data scientist with deep knowledge of statistical methods,
+data quality assessment, and visualization techniques. You ensure analyses are
+scientifically sound and computationally efficient.""",
 llm_config=create_llm_config(temperature=0.3),
 verbose=True,
 allow_delegation=False
@@ -167,9 +165,9 @@ Create code generation agent
 """
 return Agent(
 role="Scientific Programmer",
-goal="Generate clean, efficient Python code for astronomy analysis",
+goal="Generate clean, efficient Python code for data and analysis tasks",
 backstory="""You are an expert Python programmer specializing in scientific
-computing. You write clean, well-documented code using astropy, pandas,
+computing. You write clean, well-documented code using pandas,
 matplotlib, and numpy. You always include error handling, logging, and
 follow PEP 8 standards.""",
 llm_config=create_llm_config(temperature=0.2), # Lower for code
@@ -192,7 +190,7 @@ allow_delegation=False
 )
 2.4 Workflow Logic (workflow.py)
 """
-CrewAI Workflow for Astronomy Data Analysis
+CrewAI Workflow for Code and Data Tasks
 """
 from crewai import Crew, Task, Process
 from crewai.flow.flow import Flow, listen, start
@@ -209,12 +207,11 @@ create_reviewer_agent
 )
 from config import get_workflow_config
 class WorkflowState(BaseModel):
-"""State management for astronomy workflow"""
+"""State management for workflow"""
 workflow_id: str = Field(default_factory=lambda: str(uuid.uuid4())[:8])
 timestamp: datetime = Field(default_factory=datetime.now)
 # User inputs
 research_question: str = ""
-data_source: str = "gaia_dr3"
 
 # Agent outputs
 analysis_plan: Optional[str] = None
@@ -228,7 +225,7 @@ error: Optional[str] = None
 
 class AstronomyWorkflow(Flow[WorkflowState]):
 """
-Main workflow for astronomy data analysis
+Main workflow for code and data tasks
 Simple 4-step process: Plan → Analyze → Code → Review
 """
 def __init__(self, state: WorkflowState):
@@ -250,8 +247,7 @@ def initialize(self) -> Dict:
     self.state.status = "planning"
     
     return {
-        "research_question": self.state.research_question,
-        "data_source": self.state.data_source
+        "research_question": self.state.research_question
     }
 
 @listen(initialize)
@@ -261,15 +257,13 @@ def planning_phase(self, context: Dict) -> Dict:
     
     planning_task = Task(
         description=f"""
-        Create a detailed analysis plan for this research question:
+        Create a detailed plan for this task:
         "{context['research_question']}"
         
-        Data source: {context['data_source']}
-        
         Your plan should include:
-        1. Data selection criteria (which columns, filters)
-        2. Sample size considerations
-        3. Key analysis steps
+        1. Inputs and assumptions
+        2. Data handling steps (if any)
+        3. Key implementation steps
         4. Expected outputs
         
         Be specific and practical.
@@ -308,7 +302,7 @@ def analysis_phase(self, planning_result: Dict) -> Dict:
         3. Quality checks and validation
         4. Expected insights
         
-        Focus on practical astronomy analysis.
+        Focus on practical, executable steps.
         """,
         expected_output="Statistical analysis strategy with methods",
         agent=self.analyst
@@ -341,7 +335,7 @@ def coding_phase(self, analysis_result: Dict) -> Dict:
         Methods: {analysis_result['statistical_approach']}
         
         Requirements:
-        - Use astropy, pandas, matplotlib, numpy
+        - Use pandas, matplotlib, numpy
         - Include proper error handling
         - Add clear comments
         - Save plots and results
@@ -450,10 +444,9 @@ def _get_readme_path(self) -> str:
 
 def _generate_readme(self) -> str:
     """Generate README.md for workflow"""
-    return f"""# Astronomy Workflow {self.state.workflow_id}
+    return f"""# Workflow {self.state.workflow_id}
 
 Generated: {self.state.timestamp.strftime('%Y-%m-%d %H:%M:%S')}
-Data Source: {self.state.data_source}
 ________________________________________
 Research Question
 {self.state.research_question}
@@ -468,7 +461,7 @@ Generated Code
 The analysis is implemented in workflow_{self.state.workflow_id}.py
 Requirements
 Install dependencies:
-pip install astropy pandas matplotlib numpy
+pip install pandas matplotlib numpy
 Usage
 Run the analysis:
 python workflow_{self.state.workflow_id}.py
@@ -486,25 +479,24 @@ workflow_{self.state.workflow_id}.py # Main analysis script
 README_{self.state.workflow_id}.md # This documentation
 ________________________________________
 Notes
-•	Ensure you have access to {self.state.data_source} data
+•	Ensure you have access to any required input data
 •	Results will be saved in the results/ directory
 •	Check the code review section above for any recommendations
 ________________________________________
-Generated by CrewAI Astronomy Workflow System
+Generated by CrewAI Workflow System
 """
-def run_workflow(research_question: str, data_source: str = "gaia_dr3") -> Dict:
+def run_workflow(research_question: str) -> Dict:
 """
 Convenience function to run complete workflow
 Args:
     research_question: Research question to analyze
-    data_source: Data source (default: gaia_dr3)
+    data_source: (removed)
     
 Returns:
     Dictionary with workflow results
 """
 state = WorkflowState(
-    research_question=research_question,
-    data_source=data_source
+    research_question=research_question
 )
 
 workflow = AstronomyWorkflow(state=state)
@@ -522,7 +514,7 @@ return {
 
 2.5 Streamlit Dashboard (app.py)
 """
-Streamlit Dashboard for CrewAI Astronomy Workflows
+Streamlit Dashboard for CrewAI Workflows
 Production-ready UI with clean design
 """
 import streamlit as st
@@ -536,8 +528,8 @@ Initialize
 init_directories()
 Page config
 st.set_page_config(
-page_title="CrewAI Astronomy Workflows",
-page_icon="🔭",
+page_title="CrewAI Workflows",
+page_icon="🧠",
 layout="wide",
 initial_sidebar_state="expanded"
 )
@@ -552,9 +544,9 @@ st.session_state.current_workflow = None
 def main():
 """Main dashboard"""
 # Header
-st.markdown('<div class="main-header">🔭 CrewAI Astronomy Workflows</div>', 
+st.markdown('<div class="main-header">🧠 CrewAI Workflows</div>', 
             unsafe_allow_html=True)
-st.markdown('<div class="sub-header">AI-Powered Multi-Agent System for Astronomical Data Analysis</div>', 
+st.markdown('<div class="sub-header">AI-Powered Multi-Agent System for Code and Data Tasks</div>', 
             unsafe_allow_html=True)
 
 # Sidebar
@@ -599,12 +591,12 @@ def render_new_workflow_page():
 st.markdown("## 🚀 Create New Workflow")
 
 # Quick start examples
-with st.expander("💡 Example Research Questions", expanded=False):
+with st.expander("💡 Example Tasks", expanded=False):
     examples = [
-        "Analyze the color-magnitude distribution of red giant stars in the Galactic bulge",
-        "Study the proper motion distribution of stars in the solar neighborhood",
-        "Investigate the relationship between stellar metallicity and kinematics",
-        "Create an HR diagram for open cluster NGC 2516"
+        "Plot sin(x) and save the figure",
+        "Load a CSV and summarize columns with basic stats",
+        "Fetch JSON from an API and visualize a key metric",
+        "Generate a histogram from a local dataset"
     ]
     for i, example in enumerate(examples):
         if st.button(f"Use Example {i+1}", key=f"ex_{i}"):
@@ -613,24 +605,17 @@ with st.expander("💡 Example Research Questions", expanded=False):
 # Research question input
 default_question = st.session_state.get('example_question', '')
 research_question = st.text_area(
-    "Research Question",
+    "Task Request",
     value=default_question,
     height=120,
-    placeholder="Enter your astronomy research question...\n\nExample: Analyze the spatial distribution and kinematics of red giant stars in the Galactic bulge using Gaia DR3 data",
-    help="Describe what you want to analyze. Be specific about the data and analysis goals."
+    placeholder="Describe the task you want to run...\n\nExample: Plot sin(x) and save the figure",
+    help="Describe what you want to build or analyze. Be specific about inputs and outputs."
 )
 
-# Data source
+# Data source (removed)
 col1, col2 = st.columns([2, 1])
 with col1:
-    data_source = st.selectbox(
-        "Data Source",
-        ["gaia_dr3", "gaia_dr2", "sdss", "2mass"],
-        help="Select the astronomical data catalog to use"
-    )
-
-with col2:
-    use_cache = st.checkbox("Use cached data", value=True)
+    st.text_input("Data Source", value="(removed)", disabled=True)
 
 # Advanced options
 with st.expander("⚙️ Advanced Options"):
@@ -650,9 +635,9 @@ with col2:
             st.error("⚠️ Please enter a research question")
             return
         
-        launch_workflow(research_question, data_source)
+        launch_workflow(research_question)
 
-def launch_workflow(research_question: str, data_source: str):
+def launch_workflow(research_question: str):
 """Launch new workflow with progress tracking"""
 # Progress container
 progress_container = st.container()
@@ -676,8 +661,7 @@ with progress_container:
         progress_bar.progress(10)
         
         state = WorkflowState(
-            research_question=research_question,
-            data_source=data_source
+            research_question=research_question
         )
         workflow = AstronomyWorkflow(state=state)
         
@@ -731,7 +715,6 @@ with progress_container:
             'workflow_id': state.workflow_id,
             'timestamp': datetime.now().isoformat(),
             'research_question': research_question,
-            'data_source': data_source,
             'status': 'completed',
             'analysis_plan': state.analysis_plan,
             'statistical_approach': state.statistical_approach,
@@ -808,7 +791,7 @@ for workflow in reversed(st.session_state.workflows):
         
         with col1:
             st.markdown(f"**Question:** {workflow['research_question']}")
-            st.markdown(f"**Data Source:** {workflow['data_source']}")
+            st.markdown("**Data Source:** N/A")
             st.markdown(f"**Timestamp:** {workflow['timestamp']}")
         
         with col2:
@@ -843,7 +826,7 @@ for workflow in reversed(st.session_state.workflows):
                     readme_content = f"""# Workflow {workflow['workflow_id']}
 
 Research Question: {workflow['research_question']}
-Data Source: {workflow['data_source']}
+Data Source: N/A
 Timestamp: {workflow['timestamp']}
 Analysis Plan
 {workflow.get('analysis_plan', 'N/A')}
@@ -935,8 +918,7 @@ requests>=2.31.0
 Data handling
 pandas>=2.1.0
 numpy>=1.26.0
-Astronomy libraries (for generated code)
-astropy>=6.0.0
+Visualization libraries (for generated code)
 matplotlib>=3.8.0
 Utilities
 python-dotenv>=1.0.0
@@ -962,8 +944,8 @@ ________________________________________
 •	Valid API key for the endpoint
 3.2 Installation Steps
 1. Clone or create project directory
-mkdir astronomy-crewai
-cd astronomy-crewai
+mkdir workflow-crewai
+cd workflow-crewai
 2. Create virtual environment
 python -m venv venv
 source venv/bin/activate # On Windows: venv\Scripts\activate
@@ -993,8 +975,7 @@ ________________________________________
 Simple workflow execution
 from workflow import run_workflow
 result = run_workflow(
-research_question="Analyze red giant stars in the Galactic bulge",
-data_source="gaia_dr3"
+research_question="Plot sin(x) and save the figure"
 )
 print(f"Workflow ID: {result['workflow_id']}")
 print(f"Status: {result['status']}")
@@ -1003,8 +984,7 @@ print(f"Code saved to: {result['code_file']}")
 from workflow import WorkflowState, AstronomyWorkflow
 Create workflow state
 state = WorkflowState(
-research_question="Study proper motions of nearby stars",
-data_source="gaia_dr3"
+research_question="Load a CSV and summarize columns"
 )
 Initialize and run workflow
 workflow = AstronomyWorkflow(state=state)
@@ -1019,7 +999,7 @@ streamlit run app.py
 2.	Create Workflow:
 o	Navigate to "🚀 New Workflow"
 o	Enter research question or select example
-o	Choose data source
+o	Skip data source selection
 o	Click "Launch Workflow"
 3.	Monitor Execution:
 o	Watch real-time progress through 4 phases
@@ -1031,39 +1011,30 @@ o	View all past workflows
 o	Access saved code and analysis plans
 ________________________________________
 5. Example Workflows
-Example 1: HR Diagram Analysis
-Research Question:
-Create a Hertzsprung-Russell diagram for stars in the solar neighborhood
-using Gaia DR3 parallax and photometry data. Identify main sequence,
-giant branch, and white dwarf populations.
+Example 1: Sine Plot
+Task Request:
+Plot sin(x) from 0 to 2π and save the figure as a PNG.
 Expected Output:
-•	README.md: Complete documentation with analysis plan, statistical approach, and usage instructions
-•	workflow_abc123.py: Python script implementing HR diagram generation with astropy and matplotlib
-•	Data selection strategy (parallax > 5 mas, G < 15)
-•	Population classification methods
-•	HR diagram plot with labeled populations saved as PNG
+•	README.md: Documentation with plan, approach, and usage instructions
+•	workflow_abc123.py: Python script that generates the plot
+•	Saved plot file in results/ (e.g., sin.png)
 Generated Files:
 outputs/workflows/
-├── workflow_abc123.py # Analysis script
-└── README_abc123.md # Full documentation
-Example 2: Kinematic Analysis
-Research Question:
-Analyze the velocity distribution of stars in the Galactic disk.
-Calculate U, V, W velocity components and identify kinematic groups.
+├── workflow_abc123.py # Script
+└── README_abc123.md # Documentation
+Example 2: CSV Summary
+Task Request:
+Load a CSV and compute summary statistics for numeric columns.
 Expected Output:
-•	Data selection strategy (proper motions, radial velocities)
-•	Coordinate transformation methods
-•	Python code for velocity calculations
-•	3D velocity distribution plots
-Example 3: Stellar Population Study
-Research Question:
-Study the metallicity-age relationship for nearby FGK dwarf stars
-using Gaia DR3 and spectroscopic survey data.
+•	Data parsing and validation steps
+•	Summary table output
+•	Optional histograms for key columns
+Example 3: API Metric Chart
+Task Request:
+Fetch JSON from an API and visualize a key metric over time.
 Expected Output:
-•	Cross-matching strategy with spectroscopic catalogs
-•	Age estimation methods
-•	Python code for analysis and visualization
-•	Metallicity-age scatter plot with trends
+•	API fetch and parsing steps
+•	Time-series plot saved as PNG
 ________________________________________
 6. Configuration Guide
 6.1 LLM Endpoint Configuration
@@ -1103,10 +1074,8 @@ tools=[], # Add custom tools
 verbose=True
 )
 6.5 Adding New Data Sources
-Extend data_source options in workflow:
-In WorkflowState
-data_source: str = "gaia_dr3" # Add: "sdss", "2mass", etc.
-Update agent instructions to handle new sources
+Data source selection removed from workflow state. Add any data handling
+logic directly in the task request and agent instructions.
 ________________________________________
 7. Troubleshooting
 Common Issues
@@ -1130,12 +1099,12 @@ export CREWAI_TELEMETRY_OPT_OUT=true
 streamlit run app.py
 ________________________________________
 8. Conclusion
-This implementation provides a complete, working CrewAI system for astronomy research workflows with:
+This implementation provides a complete, working CrewAI system for code and data workflows with:
 ✅ 4 specialized agents (Planner, Analyst, Coder, Reviewer)
 ✅ Local LLM endpoint integration (https://ai.aip.de/api)
 ✅ Production Streamlit UI with real-time monitoring
 ✅ Copy-paste ready code with full documentation
-✅ Practical astronomy use cases (Gaia DR3 analysis)
+✅ Practical coding and data use cases
 ✅ Clean architecture - easy to understand and extend
 Generated Output Structure:
 Each workflow generates:
@@ -1149,7 +1118,7 @@ o	Code review feedback
 o	Requirements and dependencies
 Next Steps:
 1.	Deploy to AIP infrastructure
-2.	Add more astronomical data sources
+2.	Add more data source connectors
 3.	Integrate with existing pipelines
 4.	Scale to multi-user environment
 5.	Add automated testing for generated scripts
@@ -1158,4 +1127,4 @@ References
 [1] CrewAI Documentation. (2026). Multi-agent framework. https://docs.crewai.com/
 [2] Streamlit Documentation. (2026). Build data apps. https://docs.streamlit.io/
 [3] OpenAI API Documentation. (2026). API reference. https://platform.openai.com/docs/api-reference
-[4] Gaia DR3 Documentation. (2022). ESA Gaia mission. https://www.cosmos.esa.int/web/gaia/dr3
+[4] LiteLLM Documentation. (2026). Proxy for multiple providers. https://docs.litellm.ai/

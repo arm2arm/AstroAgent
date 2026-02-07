@@ -1,5 +1,5 @@
 """
-CrewAI Workflow for Astronomy Data Analysis
+CrewAI Workflow for Code and Data Tasks
 
 Pipeline
 --------
@@ -58,7 +58,6 @@ class WorkflowState(BaseModel):
 
     # User inputs
     research_question: str = ""
-    data_source: str = "gaia_dr3"
     task_complexity: int = -1          # -1 = unknown, use LLM heuristic
 
     # Agent outputs
@@ -109,7 +108,7 @@ def _discover_artifacts(results_dir: str) -> list[str]:
 
 class AstronomyWorkflow(Flow[WorkflowState]):
     """
-    Orchestrates the full research pipeline.
+    Orchestrates the full task pipeline.
 
     Simple tasks  (complexity <= 3): Coder -> Executor -> Reviewer (+ loop)
     Complex tasks (complexity > 3):  Planner -> Analyst -> Coder -> Executor -> Reviewer (+ loop)
@@ -274,12 +273,10 @@ class AstronomyWorkflow(Flow[WorkflowState]):
         """Decide simple vs complex based on the task_complexity field."""
         print(f"\n>>> Starting workflow {self.state.workflow_id}")
         print(f"   Question : {self.state.research_question}")
-        print(f"   Source   : {self.state.data_source}")
         print(f"   Complexity: {self.state.task_complexity}")
         self.state.status = "classifying"
         return {
             "research_question": self.state.research_question,
-            "data_source": self.state.data_source,
         }
 
     @router(classify_task)
@@ -318,19 +315,18 @@ class AstronomyWorkflow(Flow[WorkflowState]):
 
         memory_context = self._retrieve_memory(
             "planning",
-            f"{self.state.research_question} {self.state.data_source}",
+            f"{self.state.research_question}",
         )
 
         task = Task(
             description=(
-                f'Create a detailed analysis plan for this research question:\n'
+                f'Create a detailed plan for this task:\n'
                 f'"{self.state.research_question}"\n\n'
-                f'Data source: {self.state.data_source}\n\n'
                 f'{memory_context}\n'
                 'Your plan should include:\n'
-                '1. Data selection criteria (which columns, filters)\n'
-                '2. Sample size considerations\n'
-                '3. Key analysis steps\n'
+                '1. Inputs and assumptions\n'
+                '2. Data handling steps (if any)\n'
+                '3. Key implementation steps\n'
                 '4. Expected outputs\n\n'
                 'Be specific and practical.'
             ),
@@ -352,20 +348,20 @@ class AstronomyWorkflow(Flow[WorkflowState]):
 
         memory_context = self._retrieve_memory(
             "analysis",
-            f"{self.state.research_question} {self.state.data_source}",
+            f"{self.state.research_question}",
         )
 
         task = Task(
             description=(
-                f'Design the statistical analysis approach for this plan:\n\n'
+                f'Design the analysis approach for this plan:\n\n'
                 f'{self.state.analysis_plan}\n\n'
                 f'{memory_context}\n'
                 'Specify:\n'
-                '1. Statistical methods to use\n'
+                '1. Methods to use\n'
                 '2. Visualization strategies (plots, diagrams)\n'
                 '3. Quality checks and validation\n'
-                '4. Expected insights\n\n'
-                'Focus on practical astronomy analysis.'
+                '4. Expected outputs\n\n'
+                'Focus on practical, executable steps.'
             ),
             expected_output="Statistical analysis strategy with methods",
             agent=self.analyst,
@@ -409,7 +405,7 @@ class AstronomyWorkflow(Flow[WorkflowState]):
 
         memory_context = self._retrieve_memory(
             "coding",
-            f"{self.state.research_question} {self.state.data_source}",
+            f"{self.state.research_question}",
         )
         if memory_context:
             context_parts.append(memory_context.strip())
@@ -438,7 +434,6 @@ class AstronomyWorkflow(Flow[WorkflowState]):
             description=(
                 f'Generate a complete, self-contained Python script for:\n'
                 f'"{self.state.research_question}"\n\n'
-                f'Data source: {self.state.data_source}\n\n'
                 f'{context}'
                 f'{revision_hint}\n\n'
                 f'CRITICAL requirements:\n'
@@ -574,7 +569,7 @@ class AstronomyWorkflow(Flow[WorkflowState]):
 
         memory_context = self._retrieve_memory(
             "review",
-            f"{self.state.research_question} {self.state.data_source}",
+            f"{self.state.research_question}",
         )
 
         task = Task(
@@ -735,16 +730,15 @@ class AstronomyWorkflow(Flow[WorkflowState]):
             lines = "\n".join(f"- `{a}`" for a in self.state.execution_artifacts)
             artifacts_section = f"\n## Generated Artifacts\n\n{lines}\n"
 
-        return f"""# Astronomy Workflow {self.state.workflow_id}
+        return f"""# Workflow {self.state.workflow_id}
 
 Generated: {self.state.timestamp.strftime('%Y-%m-%d %H:%M:%S')}
-Data Source: {self.state.data_source}
 Review Iterations: {self.state.iterations}
 Approved: {self.state.approved}
 
 ---
 
-## Research Question
+## Task Request
 
 {self.state.research_question}
 
@@ -772,13 +766,13 @@ Approved: {self.state.approved}
 ## Usage
 
 ```bash
-pip install numpy pandas matplotlib astropy scipy
+pip install numpy pandas matplotlib scipy
 python workflow_{self.state.workflow_id}.py
 ```
 
 ---
 
-Generated by AstroAgent -- CrewAI Astronomy Workflow System
+Generated by CrewAI Workflow System
 """
 
 
@@ -788,13 +782,11 @@ Generated by AstroAgent -- CrewAI Astronomy Workflow System
 
 def run_workflow(
     research_question: str,
-    data_source: str = "gaia_dr3",
     task_complexity: int = -1,
 ) -> Dict[str, Any]:
     """Run a complete workflow and return final state as a dict."""
     state = WorkflowState(
         research_question=research_question,
-        data_source=data_source,
         task_complexity=task_complexity,
     )
     workflow = AstronomyWorkflow(state=state)

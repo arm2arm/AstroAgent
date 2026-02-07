@@ -1,4 +1,3 @@
-title: Color-Magnitude Distribution
-question: Analyze the color-magnitude distribution of red giant stars in the Galactic bulge
-data_source: gaia.aip.de
-complexity: 6
+title: Scatter Plot with Trend
+question: Analyze a two-feature dataset and plot a scatter chart with a trend line and residuals
+complexity: 5

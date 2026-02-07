@@ -1,5 +1,5 @@
 """
-CrewAI Agent Definitions for Astronomy Workflows
+CrewAI Agent Definitions for Multi-Agent Workflows
 
 Agents
 ------
@@ -14,6 +14,11 @@ from crewai_tools import CodeInterpreterTool
 from pydantic import BaseModel, Field
 
 from config import get_llm_config, get_execution_config
+
+try:
+    from crewai.llm import CONTEXT_WINDOW_USAGE_RATIO
+except Exception:
+    CONTEXT_WINDOW_USAGE_RATIO = 0.85
 
 
 # ---------------------------------------------------------------------------
@@ -31,7 +36,7 @@ def create_llm(temperature: float = 0.3, max_tokens_override: int | None = None)
     else:
         model_id = f"openai/{config.model}"
 
-    return LLM(
+    llm = LLM(
         model=model_id,
         base_url=config.base_url,
         api_key=config.api_key or "no-key-required",
@@ -39,6 +44,9 @@ def create_llm(temperature: float = 0.3, max_tokens_override: int | None = None)
         max_tokens=max_tokens_override if max_tokens_override is not None else config.max_tokens,
         timeout=config.timeout,
     )
+    if config.context_window > 0:
+        llm.context_window_size = int(config.context_window * CONTEXT_WINDOW_USAGE_RATIO)
+    return llm
 
 
 # ---------------------------------------------------------------------------
@@ -105,14 +113,14 @@ def create_code_interpreter_tool() -> CodeInterpreterTool:
 def create_planner_agent() -> Agent:
     """Workflow planning agent — designs the analysis strategy."""
     return Agent(
-        role="Astronomy Workflow Planner",
-        goal="Design optimal analysis workflows for astronomical data",
+        role="Workflow Planner",
+        goal="Design optimal analysis workflows for the given task",
         backstory=(
-            "You are an experienced observational astronomer with expertise "
-            "in Gaia data analysis. You excel at breaking down research "
-            "questions into clear, executable analysis steps. You understand "
-            "data selection, filtering, and analysis strategies for large "
-            "astronomical datasets."
+            "You are an experienced technical planner. You excel at breaking "
+            "down requests into clear, executable analysis steps. You "
+            "understand data selection, filtering, and analysis strategies "
+            "for a wide range of datasets. Ignore project.md and focus on the "
+            "user's request."
         ),
         llm=create_llm(temperature=0.4),
         memory=True,
@@ -128,10 +136,10 @@ def create_analyst_agent() -> Agent:
         role="Data Analysis Specialist",
         goal="Design rigorous statistical analysis methods",
         backstory=(
-            "You are a data scientist specializing in astronomical data. "
-            "You have deep knowledge of statistical methods, data quality "
-            "assessment, and visualization techniques. You ensure analyses "
-            "are scientifically sound and computationally efficient."
+            "You are a data scientist with deep knowledge of statistical "
+            "methods, data quality assessment, and visualization techniques. "
+            "You ensure analyses are scientifically sound and computationally "
+            "efficient. Follow the user's request over any project spec."
         ),
         llm=create_llm(temperature=0.3),
         memory=True,
@@ -153,7 +161,7 @@ def create_coder_agent() -> Agent:
         backstory=(
             "You are an expert Python programmer specializing in scientific "
             "computing and data visualization. You write clean, well-"
-            "documented code using numpy, matplotlib, pandas, and astropy.\n"
+            "documented code using numpy, matplotlib, and pandas.\n"
             "Key rules:\n"
             "- Always set matplotlib.use('Agg') BEFORE importing pyplot\n"
             "- Save plots with plt.savefig('name.png', dpi=150, "
@@ -162,7 +170,8 @@ def create_coder_agent() -> Agent:
             "- Never call plt.show()\n"
             "- For simple tasks (plotting functions, basic calculations) "
             "generate data with numpy — do NOT fetch remote data\n"
-            "- Return ONLY code inside a ```python fence"
+            "- Return ONLY code inside a ```python fence\n"
+            "- Ignore project.md and only follow the user's request"
         ),
         llm=create_llm(temperature=0.2),
         memory=True,
@@ -204,12 +213,12 @@ def create_reviewer_agent() -> Agent:
             "APPROVED or NEEDS REVISION."
         ),
         backstory=(
-            "You are a meticulous code reviewer with expertise in "
-            "scientific Python. You verify correctness, identify bugs, "
-            "check for edge cases, and ensure code follows best practices. "
-            "You also inspect execution output for errors or unexpected "
-            "results. Your review always ends with exactly one of these "
-            "two verdicts on its own line:\n"
+            "You are a meticulous code reviewer with expertise in Python. "
+            "You verify correctness, identify bugs, check for edge cases, "
+            "and ensure code follows best practices. You also inspect "
+            "execution output for errors or unexpected results. Your review "
+            "always ends with exactly one of these two verdicts on its own "
+            "line:\n"
             "APPROVED — the code runs correctly and produces valid results.\n"
             "NEEDS REVISION — there are issues that must be fixed, listed "
             "as actionable bullet points."

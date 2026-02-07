@@ -1,4 +1,3 @@
-title: Metallicity vs Kinematics
-question: Investigate the relationship between stellar metallicity and kinematics
-data_source: gaia.aip.de
-complexity: 7
+title: Feature Relationship Analysis
+question: Investigate relationships between two numeric features and summarize key patterns
+complexity: 6

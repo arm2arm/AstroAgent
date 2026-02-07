@@ -1,4 +1,3 @@
-title: Proper Motion Distribution
-question: Study the proper motion distribution of stars in the solar neighborhood
-data_source: gaia.aip.de
-complexity: 5
+title: Response Time Distribution
+question: Analyze the distribution of API response times from a CSV and plot a histogram with summary stats
+complexity: 4

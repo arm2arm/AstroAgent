@@ -1,10 +1,10 @@
-# AstroAgent 🔭
+# WorkflowAgent 🧠
 
-CrewAI-based Multi-Agent System for Astronomical Data Analysis
+CrewAI-based Multi-Agent System for Code and Data Tasks
 
 ## Overview
 
-AstroAgent is a production-ready AI-powered workflow system that automatically designs, implements, and reviews astronomical data analysis workflows. Built with CrewAI and Streamlit, it features 4 specialized agents working together to transform research questions into executable Python code.
+WorkflowAgent is a production-ready AI-powered workflow system that automatically designs, implements, and reviews code and data tasks. Built with CrewAI and Streamlit, it features 4 specialized agents working together to transform task requests into executable Python code.
 
 ### Key Features
 
@@ -12,7 +12,7 @@ AstroAgent is a production-ready AI-powered workflow system that automatically d
 - **Interactive Streamlit Dashboard**: Clean UI for workflow creation and monitoring
 - **Flexible LLM Support**: Any OpenAI-compatible /v1 endpoint (Ollama, vLLM, LiteLLM, etc.)
 - **Endpoint Model Discovery**: Auto-discover and select available models in the UI
-- **Astronomy-Focused**: Built for Gaia DR3, DR2, SDSS, and 2MASS data analysis
+- **General-Purpose**: Works for coding, data wrangling, and visualization tasks
 - **Complete Outputs**: Generates executable Python scripts with documentation
 
 ## Architecture
@@ -32,7 +32,6 @@ AstroAgent is a production-ready AI-powered workflow system that automatically d
                    │
 ┌──────────────────▼──────────────────────────────┐
 │         Local LLM Endpoint                      │
-│         https://ai.aip.de/api                   │
 │         (OpenAI-compatible API)                 │
 └──────────────────────────────────────────────────┘
 ```
@@ -84,8 +83,7 @@ AstroAgent is a production-ready AI-powered workflow system that automatically d
 ### Creating a Workflow
 
 1. Navigate to the **🚀 New Workflow** page
-2. Enter your research question (or select an example)
-3. Choose your data source (Gaia DR3/DR2, SDSS, 2MASS, gaia.aip.de, data.aip.de, or numpy)
+2. Enter your task request (or select an example)
 4. Click **🚀 Launch Workflow**
 5. Watch as the 4 agents process your request:
    - **Planning**: Creates detailed analysis plan
@@ -93,7 +91,7 @@ AstroAgent is a production-ready AI-powered workflow system that automatically d
    - **Coding**: Generates Python code
    - **Review**: Validates code quality
 
-### Example Research Questions
+### Example Tasks
 
 Examples are loaded from `example_tasks/*.yaml` and can be customized per task.
 
@@ -162,12 +160,11 @@ The **⚙️ Configuration** page lets you change the endpoint, API key, and mod
 
 ### Example Tasks
 
-Add YAML files under `example_tasks/` with optional data source defaults:
+Add YAML files under `example_tasks/`:
 
 ```yaml
-title: HR Diagram
-question: Create an HR diagram for open cluster NGC 2516
-data_source: gaia.aip.de
+title: Sine Plot
+question: Plot sin(x) in Python and save the figure
 ```
 
 ### Agent Temperature Settings
@@ -189,7 +186,7 @@ VERBOSE=true
 
 ### Memory / RAG Settings
 
-AstroAgent can store and retrieve prior workflow context using a local SQLite
+The system can store and retrieve prior workflow context using a local SQLite
 database with FTS5 search. This is optional and enabled by default.
 
 ```bash
@@ -284,8 +281,7 @@ This project is licensed under the MIT License. See the [LICENSE](LICENSE) file 
 
 - [CrewAI Documentation](https://docs.crewai.com/)
 - [Streamlit Documentation](https://docs.streamlit.io/)
-- [Gaia DR3 Documentation](https://www.cosmos.esa.int/web/gaia/dr3)
-- [Astropy Documentation](https://docs.astropy.org/)
+- [LiteLLM Documentation](https://docs.litellm.ai/)
 
 ## Support
 
@@ -295,4 +291,4 @@ For questions or issues:
 
 ---
 
-**Built with ❤️ for the astronomy community**
+**Built with ❤️ for builders and data teams**
