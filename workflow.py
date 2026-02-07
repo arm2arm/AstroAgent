@@ -256,7 +256,15 @@ class AstronomyWorkflow(Flow[WorkflowState]):
         self._apply_token_budget(task, [self.summarizer])
         crew = self._make_crew([self.summarizer], [task])
         result = crew.kickoff()
-        return result.raw
+        return self._get_result_text(result)
+
+    def _get_result_text(self, result: Any) -> str:
+        """Extract text from CrewAI result objects safely."""
+        if result is None:
+            return ""
+        if hasattr(result, "raw"):
+            return getattr(result, "raw") or ""
+        return str(result)
 
     def _retrieve_memory(self, label: str, query: str) -> str:
         return ""
@@ -337,7 +345,7 @@ class AstronomyWorkflow(Flow[WorkflowState]):
         self._apply_token_budget(task, [self.planner])
         crew = self._make_crew([self.planner], [task])
         result = crew.kickoff()
-        self.state.analysis_plan = result.raw
+        self.state.analysis_plan = self._get_result_text(result)
         return {"analysis_plan": self.state.analysis_plan}
 
     @listen(planning_phase)
@@ -370,7 +378,7 @@ class AstronomyWorkflow(Flow[WorkflowState]):
         self._apply_token_budget(task, [self.analyst])
         crew = self._make_crew([self.analyst], [task])
         result = crew.kickoff()
-        self.state.statistical_approach = result.raw
+        self.state.statistical_approach = self._get_result_text(result)
         return {"statistical_approach": self.state.statistical_approach}
 
     # ======================================================================
@@ -459,7 +467,7 @@ class AstronomyWorkflow(Flow[WorkflowState]):
         self._apply_token_budget(task, [self.coder])
         crew = self._make_crew([self.coder], [task])
         result = crew.kickoff()
-        self.state.generated_code = _extract_code_block(result.raw)
+        self.state.generated_code = _extract_code_block(self._get_result_text(result))
         self._save_code()
         return {"generated_code": self.state.generated_code}
 
@@ -488,14 +496,15 @@ class AstronomyWorkflow(Flow[WorkflowState]):
                 old = client.containers.get("code-interpreter")
                 old.remove(force=True)
                 print("   >> Removed stale code-interpreter container")
-            except docker_lib.errors.NotFound:
+            except Exception:
                 pass
         except Exception:
             pass  # docker SDK not required — tool handles it internally
 
         pre_install = ", ".join(self.exec_config.pre_install)
         # Escape the code for embedding in the task description
-        escaped_code = self.state.generated_code.replace('\\', '\\\\').replace('`', '\\`')
+        code_text = self.state.generated_code or ""
+        escaped_code = code_text.replace('\\', '\\\\').replace('`', '\\`')
 
         task = Task(
             description=(
@@ -531,7 +540,7 @@ class AstronomyWorkflow(Flow[WorkflowState]):
         finally:
             os.chdir(prev_cwd)
 
-        output = result.raw or ""
+        output = self._get_result_text(result)
         if "error" in output.lower() or "traceback" in output.lower():
             self.state.execution_stderr = output
             self.state.execution_stdout = ""
@@ -600,10 +609,10 @@ class AstronomyWorkflow(Flow[WorkflowState]):
         self._apply_token_budget(task, [self.reviewer])
         crew = self._make_crew([self.reviewer], [task])
         result = crew.kickoff()
-        self.state.review_report = result.raw
+        self.state.review_report = self._get_result_text(result)
 
         # Parse verdict
-        upper = (result.raw or "").upper()
+        upper = (self.state.review_report or "").upper()
         self.state.approved = "APPROVED" in upper and "NEEDS REVISION" not in upper
         self.state.iterations += 1
 

@@ -6,8 +6,8 @@ streamlit
 pydantic
 
 # LLM and API
-litellm>=1.50.0,<1.70.0
-openai~=1.83.0
+litellm
+openai
 requests
 tiktoken
 
