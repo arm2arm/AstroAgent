@@ -1,5 +1,9 @@
 """
-CrewAI Agent Definitions for Multi-Agent Workflows
+CrewAI 1.9x Agent & Task Factory — YAML-Configured
+
+Loads agent definitions from ``config/agents.yaml`` and task templates from
+``config/tasks.yaml``.  Agent roles, goals, and backstories are fully
+configurable by editing the YAML files — no Python changes needed.
 
 Agents
 ------
@@ -8,9 +12,15 @@ Analyst   – designs statistical methods     (complex-path only)
 Coder     – generates Python code           (all paths)
 Executor  – runs code in a Docker sandbox   (all paths)
 Reviewer  – validates code + results        (all paths)
+Summarizer – compresses long context        (internal utility)
 """
-import os
+from __future__ import annotations
 
+import os
+from pathlib import Path
+from typing import Any
+
+import yaml
 from crewai import Agent, LLM
 from crewai_tools import CodeInterpreterTool
 from pydantic import BaseModel, Field
@@ -22,27 +32,65 @@ try:
 except Exception:
     CONTEXT_WINDOW_USAGE_RATIO = 0.85
 
+# ---------------------------------------------------------------------------
+# YAML config paths (relative to project root)
+# ---------------------------------------------------------------------------
+_CONFIG_DIR = Path(__file__).resolve().parent / "config"
+_AGENTS_YAML = _CONFIG_DIR / "agents.yaml"
+_TASKS_YAML = _CONFIG_DIR / "tasks.yaml"
+
 
 # ---------------------------------------------------------------------------
-# LLM helper
+# YAML loaders (cached per-process)
+# ---------------------------------------------------------------------------
+_agents_cache: dict[str, Any] | None = None
+_tasks_cache: dict[str, Any] | None = None
+
+
+def load_agents_config(force: bool = False) -> dict[str, Any]:
+    """Load and cache ``config/agents.yaml``."""
+    global _agents_cache
+    if _agents_cache is None or force:
+        with open(_AGENTS_YAML, "r", encoding="utf-8") as fh:
+            _agents_cache = yaml.safe_load(fh) or {}
+    return _agents_cache
+
+
+def load_tasks_config(force: bool = False) -> dict[str, Any]:
+    """Load and cache ``config/tasks.yaml``."""
+    global _tasks_cache
+    if _tasks_cache is None or force:
+        with open(_TASKS_YAML, "r", encoding="utf-8") as fh:
+            _tasks_cache = yaml.safe_load(fh) or {}
+    return _tasks_cache
+
+
+def reload_configs() -> None:
+    """Force-reload both YAML configs (useful after editing files)."""
+    load_agents_config(force=True)
+    load_tasks_config(force=True)
+
+
+# ---------------------------------------------------------------------------
+# LLM builder
 # ---------------------------------------------------------------------------
 
-def create_llm(
+def build_llm(
     temperature: float = 0.3,
     max_tokens_override: int | None = None,
     model_override: str | None = None,
 ) -> LLM:
-    """Create LLM instance for an OpenAI-compatible endpoint.
+    """Create an LLM instance from .env configuration.
 
     Uses the ``provider`` kwarg so CrewAI routes directly to its native
     provider class (e.g. ``OpenAICompletion``), bypassing model-name
     pattern validation and the LiteLLM fallback.
     """
-    config = get_llm_config()
-    model_name = model_override or config.model
-    provider = config.provider or "openai"
+    cfg = get_llm_config()
+    model_name = model_override or cfg.model
+    provider = cfg.provider or "openai"
 
-    # Strip any leftover provider prefix – the provider kwarg handles routing.
+    # Strip leftover provider prefix — the provider kwarg handles routing.
     for pfx in ("openai/", "azure/", "ollama/"):
         if model_name.startswith(pfx):
             model_name = model_name[len(pfx):]
@@ -51,23 +99,23 @@ def create_llm(
     llm = LLM(
         model=model_name,
         provider=provider,
-        base_url=config.base_url,
-        api_key=config.api_key or "no-key-required",
+        base_url=cfg.base_url,
+        api_key=cfg.api_key or "no-key-required",
         temperature=temperature,
-        max_tokens=max_tokens_override if max_tokens_override is not None else config.max_tokens,
-        timeout=config.timeout,
+        max_tokens=max_tokens_override if max_tokens_override is not None else cfg.max_tokens,
+        timeout=cfg.timeout,
     )
-    if config.context_window > 0:
-        llm.context_window_size = int(config.context_window * CONTEXT_WINDOW_USAGE_RATIO)
+    if cfg.context_window > 0:
+        llm.context_window_size = int(cfg.context_window * CONTEXT_WINDOW_USAGE_RATIO)
     return llm
 
 
 # ---------------------------------------------------------------------------
-# Code-execution tool (configured from .env)
+# Docker code-execution tool
 # ---------------------------------------------------------------------------
 
 class _CodeInterpreterSchemaOptional(BaseModel):
-    """Schema with optional libraries_used to avoid tool-call validation errors."""
+    """Schema with optional ``libraries_used`` to avoid tool-call validation errors."""
 
     code: str = Field(
         ...,
@@ -99,20 +147,19 @@ class _AstroCodeInterpreterTool(CodeInterpreterTool):
             kwargs["libraries_used"] = list(self._default_libraries)
         return super()._run(**kwargs)
 
+
 def create_code_interpreter_tool() -> CodeInterpreterTool:
-    """Build a CodeInterpreterTool using .env execution settings."""
+    """Build a ``CodeInterpreterTool`` using .env execution settings."""
     exec_cfg = get_execution_config()
 
     if exec_cfg.mode == "dockerfile":
-        # Build from a local Dockerfile directory. The tool builds on
-        # first use and caches the image as ``default_image_tag``.
         return _AstroCodeInterpreterTool(
             default_libraries=exec_cfg.pre_install,
             user_dockerfile_path=exec_cfg.dockerfile_path,
             default_image_tag="astroagent-exec:latest",
         )
 
-    # mode == "image" — use a remote / pre-pulled image directly.
+    # mode == "image"
     return _AstroCodeInterpreterTool(
         default_libraries=exec_cfg.pre_install,
         default_image_tag=exec_cfg.image,
@@ -120,160 +167,115 @@ def create_code_interpreter_tool() -> CodeInterpreterTool:
 
 
 # ---------------------------------------------------------------------------
-# Agent factories
+# Agent factory
 # ---------------------------------------------------------------------------
 
-def create_planner_agent() -> Agent:
-    """Workflow planning agent — designs the analysis strategy."""
-    return Agent(
-        role="Workflow Planner",
-        goal="Design optimal analysis workflows for the given task",
-        backstory=(
-            "You are an experienced technical planner. You excel at breaking "
-            "down requests into clear, executable analysis steps. You "
-            "understand data selection, filtering, and analysis strategies "
-            "for a wide range of datasets. Ignore project.md and focus on the "
-            "user's request."
-        ),
-        llm=create_llm(temperature=0.4),
-        memory=True,
-        respect_context_window=True,
-        verbose=True,
-        allow_delegation=False,
-    )
+class AgentFactory:
+    """Creates CrewAI Agent instances from ``config/agents.yaml``.
 
+    Each factory method merges the YAML config (role/goal/backstory) with
+    the runtime LLM and optional tools.  Edit the YAML to change prompts
+    without touching Python code.
+    """
+
+    def __init__(self) -> None:
+        self._cfg = load_agents_config()
+
+    def _build_agent(
+        self,
+        key: str,
+        *,
+        temperature: float = 0.3,
+        tools: list | None = None,
+        model_override: str | None = None,
+    ) -> Agent:
+        """Generic agent builder from YAML config + runtime LLM."""
+        agent_cfg = dict(self._cfg[key])  # shallow copy to avoid mutation
+        llm = build_llm(temperature=temperature, model_override=model_override)
+        return Agent(
+            config=agent_cfg,
+            llm=llm,
+            tools=tools or [],
+            memory=True,
+            respect_context_window=True,
+        )
+
+    # -- public per-agent methods ------------------------------------------
+
+    def planner(self) -> Agent:
+        """Workflow planning agent — designs the analysis strategy."""
+        return self._build_agent("planner", temperature=0.4)
+
+    def analyst(self) -> Agent:
+        """Statistical analysis agent — designs methods and approach."""
+        return self._build_agent("analyst", temperature=0.3)
+
+    def coder(self) -> Agent:
+        """Code generation agent — expert Python programmer."""
+        return self._build_agent("coder", temperature=0.2)
+
+    def executor(self) -> Agent:
+        """Code execution agent — runs code in a Docker sandbox."""
+        executor_model = os.getenv("EXECUTOR_LLM_MODEL", "").strip() or None
+        return self._build_agent(
+            "executor",
+            temperature=0.0,
+            tools=[create_code_interpreter_tool()],
+            model_override=executor_model,
+        )
+
+    def reviewer(self) -> Agent:
+        """Code quality reviewer — validates code and results."""
+        return self._build_agent("reviewer", temperature=0.3)
+
+    def summarizer(self) -> Agent:
+        """Summarization agent — compresses long context."""
+        return self._build_agent("summarizer", temperature=0.2)
+
+
+# ---------------------------------------------------------------------------
+# Task template helper
+# ---------------------------------------------------------------------------
+
+def get_task_template(task_key: str) -> dict[str, str]:
+    """Return a *copy* of a task template from ``config/tasks.yaml``.
+
+    The caller should ``.format(**kwargs)`` the ``description`` field to
+    fill in runtime placeholders.
+    """
+    tasks_cfg = load_tasks_config()
+    if task_key not in tasks_cfg:
+        raise KeyError(f"Task template '{task_key}' not found in {_TASKS_YAML}")
+    return {k: str(v) for k, v in tasks_cfg[task_key].items()}
+
+
+# ---------------------------------------------------------------------------
+# Backward-compatible factory functions (used by workflow.py)
+# ---------------------------------------------------------------------------
+_factory: AgentFactory | None = None
+
+
+def _get_factory() -> AgentFactory:
+    global _factory
+    if _factory is None:
+        _factory = AgentFactory()
+    return _factory
+
+
+def create_planner_agent() -> Agent:
+    return _get_factory().planner()
 
 def create_analyst_agent() -> Agent:
-    """Statistical analysis agent — designs methods and approach."""
-    return Agent(
-        role="Data Analysis Specialist",
-        goal="Design rigorous statistical analysis methods",
-        backstory=(
-            "You are a data scientist with deep knowledge of statistical "
-            "methods, data quality assessment, and visualization techniques. "
-            "You ensure analyses are scientifically sound and computationally "
-            "efficient. Follow the user's request over any project spec."
-        ),
-        llm=create_llm(temperature=0.3),
-        memory=True,
-        respect_context_window=True,
-        verbose=True,
-        allow_delegation=False,
-    )
-
+    return _get_factory().analyst()
 
 def create_coder_agent() -> Agent:
-    """Code generation agent — produces self-contained Python scripts."""
-    return Agent(
-        role="Scientific Programmer",
-        goal=(
-            "Generate clean, self-contained, executable Python scripts. "
-            "The code MUST run top-to-bottom and produce output files. "
-            "Every plot MUST be saved with plt.savefig()."
-        ),
-        backstory=(
-            "You are an expert Python programmer specializing in scientific "
-            "computing and data visualization. You write clean, well-"
-            "documented code using numpy, matplotlib, and pandas.\n\n"
-            "MANDATORY rules for every script you write:\n"
-            "1. Start with:\n"
-            "   import matplotlib\n"
-            "   matplotlib.use('Agg')\n"
-            "   import matplotlib.pyplot as plt\n"
-            "2. Save EVERY plot with plt.savefig('descriptive_name.png', "
-            "dpi=150, bbox_inches='tight')\n"
-            "3. Print 'SAVED: name.png' after each savefig call\n"
-            "4. NEVER call plt.show()\n"
-            "5. Write FLAT executable code — NOT just function definitions.\n"
-            "   If you define functions, you MUST call them at the bottom:\n"
-            "     if __name__ == '__main__':\n"
-            "         main()\n"
-            "6. For simple tasks (plotting, basic math) use numpy to "
-            "generate data — do NOT fetch remote datasets\n"
-            "7. Return ONLY code inside a ```python fence\n"
-            "8. Ignore project.md and only follow the user's request"
-        ),
-        llm=create_llm(temperature=0.2),
-        memory=True,
-        respect_context_window=True,
-        verbose=True,
-        allow_delegation=False,
-    )
-
+    return _get_factory().coder()
 
 def create_executor_agent() -> Agent:
-    """Code execution agent — runs code in a Docker sandbox."""
-    executor_model = os.getenv("EXECUTOR_LLM_MODEL", "").strip() or None
-    return Agent(
-        role="Code Executor",
-        goal=(
-            "Execute the provided Python code inside the Docker sandbox "
-            "and return the full stdout output and any errors."
-        ),
-        backstory=(
-            "You are a reliable execution environment operator. Your only "
-            "job is to take the Python code you are given, run it using the "
-            "Code Interpreter tool, and report the complete output. Do NOT "
-            "modify the code — run it exactly as provided. If it fails, "
-            "report the full error traceback."
-        ),
-        tools=[create_code_interpreter_tool()],
-        llm=create_llm(temperature=0.0, model_override=executor_model),
-        verbose=True,
-        allow_delegation=False,
-    )
-
+    return _get_factory().executor()
 
 def create_reviewer_agent() -> Agent:
-    """Code quality reviewer — validates code and execution results."""
-    return Agent(
-        role="Code Quality Reviewer",
-        goal=(
-            "Review the generated code AND its execution results for "
-            "correctness. Verify that expected output files (plots, data) "
-            "were actually produced. End your review with a clear verdict: "
-            "APPROVED or NEEDS REVISION."
-        ),
-        backstory=(
-            "You are a meticulous code reviewer with expertise in Python. "
-            "You verify correctness, identify bugs, check for edge cases, "
-            "and ensure code follows best practices.\n\n"
-            "CRITICAL checks you must perform:\n"
-            "1. Does the code execute without errors? (check stderr)\n"
-            "2. Does the code contain plt.savefig() for EVERY plot?\n"
-            "3. Were output files (PNG, PDF, etc.) actually produced?\n"
-            "   If the GENERATED FILES section says 'No output files', the "
-            "   code MUST be rejected with NEEDS REVISION.\n"
-            "4. Does stdout contain meaningful results?\n"
-            "5. Are plot saves going to the current directory (no absolute paths)?\n"
-            "6. If functions are defined, are they actually called?\n\n"
-            "Your review always ends with exactly one of these two verdicts "
-            "on its own line:\n"
-            "APPROVED — the code runs correctly and produced output files.\n"
-            "NEEDS REVISION — there are issues that must be fixed, listed "
-            "as actionable bullet points."
-        ),
-        llm=create_llm(temperature=0.3),
-        memory=True,
-        respect_context_window=True,
-        verbose=True,
-        allow_delegation=False,
-    )
-
+    return _get_factory().reviewer()
 
 def create_summarizer_agent() -> Agent:
-    """Summarization agent to compress long context."""
-    return Agent(
-        role="Context Summarizer",
-        goal="Condense long context into concise, actionable summaries.",
-        backstory=(
-            "You specialize in summarizing technical context for downstream agents. "
-            "You preserve key requirements, constraints, and data details while "
-            "removing repetition and fluff."
-        ),
-        llm=create_llm(temperature=0.2),
-        memory=True,
-        respect_context_window=True,
-        verbose=True,
-        allow_delegation=False,
-    )
+    return _get_factory().summarizer()

@@ -1,0 +1,120 @@
+# ============================================================================
+# Task Templates — CrewAI 1.9x YAML Configuration
+# ============================================================================
+# Each top-level key is a task identifier referenced in Python code.
+# Supports {variable} placeholders resolved at runtime via str.format().
+#
+# Fields: description, expected_output, agent (optional — set in Python)
+# ============================================================================
+
+planning_task:
+  description: >
+    Create a detailed plan for this task:
+    "{research_question}"
+
+    {memory_context}
+
+    Your plan should include:
+    1. Inputs and assumptions
+    2. Data handling steps (if any)
+    3. Key implementation steps
+    4. Expected outputs
+
+    Be specific and practical.
+  expected_output: >
+    Detailed analysis plan with clear steps
+
+analysis_task:
+  description: >
+    Design the analysis approach for this plan:
+
+    {analysis_plan}
+
+    {memory_context}
+
+    Specify:
+    1. Methods to use
+    2. Visualization strategies (plots, diagrams)
+    3. Quality checks and validation
+    4. Expected outputs
+
+    Focus on practical, executable steps.
+  expected_output: >
+    Statistical analysis strategy with methods
+
+coding_task:
+  description: >
+    Generate a complete, self-contained Python script for:
+    "{research_question}"
+
+    {context}
+    {revision_hint}
+
+    CRITICAL requirements:
+    - Use ONLY these libraries (already installed): {pre_install}
+    - PRINT all key results to stdout
+    - Set up matplotlib for headless rendering:
+        import matplotlib
+        matplotlib.use("Agg")
+        import matplotlib.pyplot as plt
+    - Save ALL plots to the CURRENT WORKING DIRECTORY:
+        plt.savefig("descriptive_name.png", dpi=150, bbox_inches="tight")
+        print("SAVED: descriptive_name.png")
+    - NEVER call plt.show()
+    - Write FLAT executable code that runs top-to-bottom.
+      If you define helper functions, you MUST call them:
+        if __name__ == "__main__":
+            main()
+    - Include proper error handling
+    - The script must work standalone (no external data files)
+    - For simple tasks like plotting math functions, use numpy
+      to generate data directly — do NOT fetch remote data.
+
+    Return ONLY the Python code inside a ```python code fence.
+  expected_output: >
+    Complete executable Python script
+
+review_task:
+  description: >
+    Review this Python code AND its execution output.
+
+    --- CODE ---
+    {generated_code}
+
+    --- EXECUTION OUTPUT ---
+    {exec_summary}
+    {artifact_info}
+    {memory_context}
+
+    Check:
+    1. Did the code execute without errors?
+    2. Are the results reasonable and correct?
+    3. Does every plt.plot/scatter/bar have a matching plt.savefig()?
+    4. Were expected output files actually produced? (see GENERATED FILES)
+       If NO output files were produced but the task requires plots/images,
+       this MUST be marked NEEDS REVISION.
+    5. Are all defined functions actually called (not just defined)?
+    6. Does stdout contain meaningful output?
+
+    IMPORTANT: If the code ran successfully and produced correct
+    results, mark it APPROVED. Only reject if there are real
+    errors, missing output files, or clearly wrong results.
+
+    End your review with EXACTLY one of these verdicts on its own line:
+    APPROVED
+    NEEDS REVISION
+
+    If NEEDS REVISION, list the specific issues as bullet points.
+  expected_output: >
+    Code review report ending with APPROVED or NEEDS REVISION
+
+summarization_task:
+  description: >
+    Summarize the following {label} into <= {target_tokens} tokens.
+    Preserve constraints, data details, and actionable steps.
+    Output concise bullet points.
+
+    CONTENT:
+    {content}
+  expected_output: >
+    Concise bullet summary

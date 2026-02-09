@@ -30,8 +30,8 @@ from config import (
     get_execution_config,
     get_llm_config,
     get_workflow_config,
+    get_storage_config,
     init_directories,
-    load_llm_profiles,
 )
 
 # Page config
@@ -243,103 +243,31 @@ def run_with_live_output(
 
 
 # ---------------------------------------------------------------------------
-# LLM profile helpers
+# LLM config helpers
 # ---------------------------------------------------------------------------
 
-def init_llm_session_state():
-    """Initialize LLM session defaults from .env profiles."""
-    profiles = load_llm_profiles()
-    if "llm_profiles" not in st.session_state:
-        st.session_state.llm_profiles = profiles
-    if "llm_profile_idx" not in st.session_state:
-        st.session_state.llm_profile_idx = 0
-    if "llm_model_choice" not in st.session_state:
-        if profiles:
-            st.session_state.llm_model_choice = profiles[0].model
-        else:
-            st.session_state.llm_model_choice = get_llm_config().model
-
-
-def _active_profile():
-    """Return the currently selected profile (or a fallback)."""
-    profiles = st.session_state.get("llm_profiles", [])
-    idx = st.session_state.get("llm_profile_idx", 0)
-    if profiles and 0 <= idx < len(profiles):
-        return profiles[idx]
+def apply_llm_env():
+    """Push active LLM config to environment for downstream consumers."""
     cfg = get_llm_config()
-    from config import LLMProfile
-    return LLMProfile(
-        name="default",
-        base_url=cfg.base_url,
-        api_key=cfg.api_key,
-        model=cfg.model,
-        provider=cfg.provider,
-        context_window=cfg.context_window,
-        output_budget=cfg.output_budget,
-        embed_model=cfg.embed_model,
-        embed_provider=cfg.embed_provider,
-        embed_base_url=cfg.embed_base_url,
-        embed_api_key=cfg.embed_api_key,
-    )
-
-
-def apply_llm_overrides():
-    """Apply active profile + selected model to runtime environment."""
-    profile = _active_profile()
-    base_url = profile.base_url.rstrip("/")
+    base_url = cfg.base_url.rstrip("/")
     if not base_url.endswith("/v1"):
         base_url = f"{base_url}/v1"
-    api_key = profile.api_key or "no-key-required"
+    api_key = cfg.api_key or "no-key-required"
     os.environ["LLM_BASE_URL"] = base_url
     os.environ["LLM_API_KEY"] = api_key
-    os.environ["LLM_MODEL"] = st.session_state.get("llm_model_choice", profile.model)
-    os.environ["LLM_PROVIDER"] = getattr(profile, "provider", "openai")
-    os.environ["LLM_CONTEXT_WINDOW"] = str(profile.context_window)
-    os.environ["LLM_OUTPUT_BUDGET"] = str(profile.output_budget)
-    # Embedding model config for CrewAI memory
-    os.environ["EMBED_MODEL"] = profile.embed_model or ""
-    os.environ["EMBED_PROVIDER"] = profile.embed_provider or "ollama"
-    if profile.embed_base_url:
-        os.environ["EMBED_BASE_URL"] = profile.embed_base_url
-    else:
-        os.environ.pop("EMBED_BASE_URL", None)
-    if profile.embed_api_key:
-        os.environ["EMBED_API_KEY"] = profile.embed_api_key
-    else:
-        os.environ.pop("EMBED_API_KEY", None)
-    # CrewAI's OllamaProvider reads these env vars directly as fallback
-    if (profile.embed_provider or "ollama").lower() == "ollama" and profile.embed_model:
-        ollama_base = (profile.embed_base_url or base_url).rstrip("/")
-        if ollama_base.endswith("/v1"):
-            ollama_base = ollama_base[:-3]
-        os.environ["EMBEDDINGS_OLLAMA_MODEL_NAME"] = profile.embed_model
-        os.environ["EMBEDDINGS_OLLAMA_URL"] = f"{ollama_base}/api/embeddings"
-    # LiteLLM / openai client also reads OPENAI_API_KEY directly
+    os.environ["LLM_MODEL"] = cfg.model
+    os.environ["LLM_PROVIDER"] = cfg.provider
+    os.environ["LLM_CONTEXT_WINDOW"] = str(cfg.context_window)
+    os.environ["LLM_OUTPUT_BUDGET"] = str(cfg.output_budget)
+    os.environ["EMBED_MODEL"] = cfg.embed_model or ""
+    os.environ["EMBED_PROVIDER"] = cfg.embed_provider or "ollama"
+    if cfg.embed_base_url:
+        os.environ["EMBED_BASE_URL"] = cfg.embed_base_url
+    if cfg.embed_api_key:
+        os.environ["EMBED_API_KEY"] = cfg.embed_api_key
     os.environ["OPENAI_API_KEY"] = api_key
-    # Ensure OpenAI-compatible clients use the correct base URL
     os.environ["OPENAI_BASE_URL"] = base_url
     os.environ["OPENAI_API_BASE"] = base_url
-
-
-@st.cache_data(ttl=300, show_spinner=False)
-def fetch_available_models(base_url: str, api_key: str) -> list[str]:
-    """Fetch model IDs from an OpenAI-compatible /v1 endpoint."""
-    base = base_url.rstrip("/")
-    url = f"{base}/models" if base.endswith("/v1") else f"{base}/v1/models"
-
-    headers = {"Accept": "application/json"}
-    if api_key:
-        headers["Authorization"] = f"Bearer {api_key}"
-
-    try:
-        response = requests.get(url, headers=headers, timeout=10)
-        response.raise_for_status()
-        payload = response.json()
-        data = payload.get("data", []) if isinstance(payload, dict) else []
-        models = [item.get("id") for item in data if isinstance(item, dict)]
-        return sorted({m for m in models if m})
-    except Exception:
-        return []
 
 
 # =========================================================================
@@ -349,8 +277,7 @@ def fetch_available_models(base_url: str, api_key: str) -> list[str]:
 def main():
     """Main dashboard."""
     _init_directories_once()
-    init_llm_session_state()
-    apply_llm_overrides()
+    apply_llm_env()
 
     # Header
     st.markdown(
@@ -375,10 +302,8 @@ def main():
 
         # Status
         st.markdown("### System Status")
-        profile = _active_profile()
         llm_config = get_llm_config()
         st.success("✅ LLM: Ready")
-        st.info(f"🧭 Profile: {profile.name}")
         st.info(f"🔗 Endpoint: {llm_config.base_url}")
         st.info(f"🤖 Model: {llm_config.model}")
 
@@ -405,51 +330,9 @@ def render_new_workflow_page():
     """Render new workflow creation page."""
     st.markdown("## 🚀 Create New Workflow")
 
-    # ── Endpoint & Model selectors ──
-    profiles = st.session_state.get("llm_profiles", [])
-    if profiles:
-        profile_names = [p.name for p in profiles]
-        col_ep, col_model = st.columns([1, 1])
-        with col_ep:
-            selected_name = st.selectbox(
-                "LLM Endpoint",
-                profile_names,
-                index=st.session_state.get("llm_profile_idx", 0),
-                key="_profile_select",
-                help="Choose which OpenAI-compatible endpoint to use",
-            )
-            new_idx = profile_names.index(selected_name)
-            if new_idx != st.session_state.get("llm_profile_idx"):
-                st.session_state.llm_profile_idx = new_idx
-                st.session_state.llm_model_choice = profiles[new_idx].model
-                apply_llm_overrides()
-                st.rerun()
-
-        profile = _active_profile()
-        if "model_cache" not in st.session_state:
-            st.session_state.model_cache = {}
-        cache_key = f"models_{st.session_state.get('llm_profile_idx', 0)}"
-
-        with col_model:
-            if st.button("Discover Models", key=f"discover_{cache_key}"):
-                st.session_state.model_cache[cache_key] = fetch_available_models(
-                    profile.base_url,
-                    profile.api_key,
-                )
-            discovered = st.session_state.model_cache.get(cache_key, [])
-            if discovered:
-                current = st.session_state.get("llm_model_choice", profile.model)
-                idx = discovered.index(current) if current in discovered else 0
-                st.selectbox(
-                    "Model", discovered, index=idx, key="llm_model_choice",
-                    help="Models discovered from the endpoint",
-                )
-            else:
-                st.text_input(
-                    "Model", key="llm_model_choice",
-                    help="Could not discover models — enter the name manually",
-                )
-        apply_llm_overrides()
+    # Show active LLM config
+    llm_config = get_llm_config()
+    st.info(f"**LLM:** {llm_config.model} @ {llm_config.base_url}")
 
     # ── Example tasks ──
     with st.expander("💡 Example Tasks", expanded=False):
@@ -798,56 +681,46 @@ def render_config_page():
     """Render configuration page."""
     st.markdown("## ⚙️ Configuration")
 
-    # -- LLM Profiles --
-    st.markdown("### 🤖 LLM Endpoint Profiles")
-    profiles = st.session_state.get("llm_profiles", [])
-    if profiles:
-        for i, p in enumerate(profiles):
-            active = "(active)" if i == st.session_state.get("llm_profile_idx", 0) else ""
-            with st.expander(
-                f"**{p.name}** {active}",
-                expanded=(i == st.session_state.get("llm_profile_idx", 0)),
-            ):
-                st.text_input("Base URL", value=p.base_url, disabled=True, key=f"cfg_url_{i}")
-                st.text_input("API Key", value="••••" if p.api_key else "(none)", disabled=True, key=f"cfg_key_{i}")
-                st.text_input("Default Model", value=p.model, disabled=True, key=f"cfg_model_{i}")
-                st.number_input("Context Window", value=p.context_window, disabled=True, key=f"cfg_ctx_{i}")
-                st.number_input("Output Budget", value=p.output_budget, disabled=True, key=f"cfg_budget_{i}")
-    else:
-        st.warning("No profiles found. Add `LLM_1_*` entries to your `.env` file.")
-
+    # -- LLM Settings --
+    st.markdown("### 🤖 LLM Settings")
     llm_config = get_llm_config()
-    st.markdown("### Active LLM Settings")
     col1, col2 = st.columns(2)
     with col1:
-        st.text_input("Active Endpoint", value=llm_config.base_url, disabled=True)
-        st.text_input("Active Model", value=llm_config.model, disabled=True)
+        st.text_input("Endpoint", value=llm_config.base_url, disabled=True)
+        st.text_input("Model", value=llm_config.model, disabled=True)
+        st.text_input("Provider", value=llm_config.provider, disabled=True)
     with col2:
         st.number_input("Temperature", value=llm_config.temperature, disabled=True)
         st.number_input("Max Tokens", value=llm_config.max_tokens, disabled=True)
         st.number_input("Context Window", value=llm_config.context_window, disabled=True)
         st.number_input("Output Budget", value=llm_config.output_budget, disabled=True)
 
-    with st.expander("🔐 Adding Profiles"):
+    with st.expander("💡 Configuration Help"):
         st.markdown("""
-        Define profiles in your `.env` file using numbered keys:
+        All settings are loaded from the `.env` file. Key variables:
 
         ```
-        LLM_1_NAME=Ollama Local
-        LLM_1_BASE_URL=http://localhost:11434/v1
-        LLM_1_API_KEY=
-        LLM_1_MODEL=qwen3-coder:latest
-
-        LLM_2_NAME=AIP
-        LLM_2_BASE_URL=https://ai.aip.de/api
-        LLM_2_API_KEY=your-api-key
-        LLM_2_MODEL=Qwen2.5-32B-Instruct
+        LLM_BASE_URL=http://localhost:11434/v1
+        LLM_API_KEY=
+        LLM_MODEL=qwen3-coder:latest
+        LLM_PROVIDER=openai
+        LLM_CONTEXT_WINDOW=32768
+        LLM_OUTPUT_BUDGET=8192
         ```
 
-        All endpoints must be OpenAI-compatible (`/v1`). Leave `API_KEY` empty for
-        endpoints that do not require authentication (e.g. local Ollama).
+        Agent prompts are configured in `config/agents.yaml`.
+        Task templates are configured in `config/tasks.yaml`.
         Restart the app after editing `.env`.
         """)
+
+    # -- Memory / Storage --
+    st.markdown("### 🧠 Memory & Storage")
+    storage_config = get_storage_config()
+    col1, col2 = st.columns(2)
+    with col1:
+        st.checkbox("Memory Enabled", value=storage_config.enabled, disabled=True)
+    with col2:
+        st.text_input("SQLite DB Path", value=storage_config.db_path, disabled=True)
 
     # -- Execution Environment --
     st.markdown("### 🐳 Execution Environment")

@@ -29,20 +29,14 @@ from typing import Any, Dict, List, Optional
 from crewai import Crew, Process, Task
 from crewai.flow.flow import Flow, listen, router, start
 from pydantic import BaseModel, Field
-import inspect
 
-from agents import (
-    create_analyst_agent,
-    create_coder_agent,
-    create_planner_agent,
-    create_reviewer_agent,
-    create_summarizer_agent,
-)
+from agents import AgentFactory, get_task_template
 from config import (
     get_execution_config,
     get_workflow_config,
     get_llm_config,
-    get_memory_config,
+    get_storage_config,
+    get_crewai_embedder_dict,
 )
 from token_budget import build_budget, estimate_tokens, truncate_text
 
@@ -323,8 +317,10 @@ class AstronomyWorkflow(Flow[WorkflowState]):
         # __init__ calls dir(self)/getattr which triggers @property accessors.
         self.wf_config = get_workflow_config()
         self.exec_config = get_execution_config()
-        self.mem_config = get_memory_config()
-        self.memory = None
+        self.storage_config = get_storage_config()
+
+        # Agent factory (loads config/agents.yaml)
+        self._agent_factory = AgentFactory()
 
         # Agents (created lazily via @property)
         self._planner = None
@@ -341,8 +337,6 @@ class AstronomyWorkflow(Flow[WorkflowState]):
         )
         os.makedirs(self._results_dir, exist_ok=True)
 
-        # External RAG store removed for startup speed. Agent-local memory remains.
-
         # Honour workflow-config max iterations
         self.state.max_iterations = self.wf_config.max_review_iterations
 
@@ -351,55 +345,57 @@ class AstronomyWorkflow(Flow[WorkflowState]):
     @property
     def planner(self):
         if self._planner is None:
-            self._planner = create_planner_agent()
+            self._planner = self._agent_factory.planner()
         return self._planner
 
     @property
     def analyst(self):
         if self._analyst is None:
-            self._analyst = create_analyst_agent()
+            self._analyst = self._agent_factory.analyst()
         return self._analyst
 
     @property
     def coder(self):
         if self._coder is None:
-            self._coder = create_coder_agent()
+            self._coder = self._agent_factory.coder()
         return self._coder
 
     @property
     def reviewer(self):
         if self._reviewer is None:
-            self._reviewer = create_reviewer_agent()
+            self._reviewer = self._agent_factory.reviewer()
         return self._reviewer
 
     @property
     def summarizer(self):
         if self._summarizer is None:
-            self._summarizer = create_summarizer_agent()
+            self._summarizer = self._agent_factory.summarizer()
         return self._summarizer
 
     # -- internal helpers ---------------------------------------------------
 
     def _make_crew(self, agents: list, tasks: list[Task]) -> Crew:
-        """Create a Crew instance with optional memory support if available."""
+        """Create a Crew instance with CrewAI native memory (SQLite LTM)."""
         crew_kwargs = {
             "agents": agents,
             "tasks": tasks,
             "process": Process.sequential,
             "verbose": self.wf_config.verbose,
         }
-        try:
-            sig = inspect.signature(Crew)
-            if "memory" in sig.parameters:
-                crew_kwargs["memory"] = bool(self.mem_config.enabled)
-            # Attach per-profile embedder when memory is enabled
-            if self.mem_config.enabled and "embedder" in sig.parameters:
-                from config import get_crewai_embedder_dict
+        if self.storage_config.enabled:
+            try:
+                from crewai.memory import LongTermMemory
+                from crewai.memory.storage.ltm_sqlite_storage import LTMSQLiteStorage
+
+                crew_kwargs["memory"] = True
+                crew_kwargs["long_term_memory"] = LongTermMemory(
+                    storage=LTMSQLiteStorage(db_path=self.storage_config.db_path)
+                )
                 embedder = get_crewai_embedder_dict()
                 if embedder:
                     crew_kwargs["embedder"] = embedder
-        except Exception:
-            pass
+            except Exception as exc:
+                print(f"   >> Memory init skipped: {exc}")
         return Crew(**crew_kwargs)
 
     def _apply_token_budget(self, task: Task, agents: list) -> None:
@@ -440,14 +436,15 @@ class AstronomyWorkflow(Flow[WorkflowState]):
         if token_count > max_prompt_tokens:
             text = truncate_text(text, max_prompt_tokens, model=llm_cfg.model)
 
+        tmpl = get_task_template("summarization_task")
+        tmpl["description"] = tmpl["description"].format(
+            label=label,
+            target_tokens=llm_cfg.summary_target_tokens,
+            content=text,
+        )
         task = Task(
-            description=(
-                f"Summarize the following {label} into <= {llm_cfg.summary_target_tokens} tokens. "
-                "Preserve constraints, data details, and actionable steps. "
-                "Output concise bullet points.\n\n"
-                f"CONTENT:\n{text}"
-            ),
-            expected_output="Concise bullet summary.",
+            description=tmpl["description"],
+            expected_output=tmpl["expected_output"],
             agent=self.summarizer,
         )
         self._apply_token_budget(task, [self.summarizer])
@@ -523,19 +520,14 @@ class AstronomyWorkflow(Flow[WorkflowState]):
             f"{self.state.research_question}",
         )
 
+        tmpl = get_task_template("planning_task")
+        tmpl["description"] = tmpl["description"].format(
+            research_question=self.state.research_question,
+            memory_context=memory_context,
+        )
         task = Task(
-            description=(
-                f'Create a detailed plan for this task:\n'
-                f'"{self.state.research_question}"\n\n'
-                f'{memory_context}\n'
-                'Your plan should include:\n'
-                '1. Inputs and assumptions\n'
-                '2. Data handling steps (if any)\n'
-                '3. Key implementation steps\n'
-                '4. Expected outputs\n\n'
-                'Be specific and practical.'
-            ),
-            expected_output="Detailed analysis plan with clear steps",
+            description=tmpl["description"],
+            expected_output=tmpl["expected_output"],
             agent=self.planner,
         )
 
@@ -556,19 +548,14 @@ class AstronomyWorkflow(Flow[WorkflowState]):
             f"{self.state.research_question}",
         )
 
+        tmpl = get_task_template("analysis_task")
+        tmpl["description"] = tmpl["description"].format(
+            analysis_plan=self.state.analysis_plan or "",
+            memory_context=memory_context,
+        )
         task = Task(
-            description=(
-                f'Design the analysis approach for this plan:\n\n'
-                f'{self.state.analysis_plan}\n\n'
-                f'{memory_context}\n'
-                'Specify:\n'
-                '1. Methods to use\n'
-                '2. Visualization strategies (plots, diagrams)\n'
-                '3. Quality checks and validation\n'
-                '4. Expected outputs\n\n'
-                'Focus on practical, executable steps.'
-            ),
-            expected_output="Statistical analysis strategy with methods",
+            description=tmpl["description"],
+            expected_output=tmpl["expected_output"],
             agent=self.analyst,
         )
 
@@ -635,34 +622,16 @@ class AstronomyWorkflow(Flow[WorkflowState]):
 
         pre_install = ", ".join(self.exec_config.pre_install)
 
+        tmpl = get_task_template("coding_task")
+        tmpl["description"] = tmpl["description"].format(
+            research_question=self.state.research_question,
+            context=context,
+            revision_hint=revision_hint,
+            pre_install=pre_install,
+        )
         task = Task(
-            description=(
-                f'Generate a complete, self-contained Python script for:\n'
-                f'"{self.state.research_question}"\n\n'
-                f'{context}'
-                f'{revision_hint}\n\n'
-                f'CRITICAL requirements:\n'
-                f'- Use ONLY these libraries (already installed): {pre_install}\n'
-                f'- PRINT all key results to stdout\n'
-                f'- Set up matplotlib for headless rendering:\n'
-                f'    import matplotlib\n'
-                f'    matplotlib.use("Agg")\n'
-                f'    import matplotlib.pyplot as plt\n'
-                f'- Save ALL plots to the CURRENT WORKING DIRECTORY:\n'
-                f'    plt.savefig("descriptive_name.png", dpi=150, bbox_inches="tight")\n'
-                f'    print("SAVED: descriptive_name.png")\n'
-                f'- NEVER call plt.show()\n'
-                f'- Write FLAT executable code that runs top-to-bottom.\n'
-                f'  If you define helper functions, you MUST call them:\n'
-                f'    if __name__ == "__main__":\n'
-                f'        main()\n'
-                f'- Include proper error handling\n'
-                f'- The script must work standalone (no external data files)\n'
-                f'- For simple tasks like plotting math functions, use numpy\n'
-                f'  to generate data directly — do NOT fetch remote data.\n\n'
-                f'Return ONLY the Python code inside a ```python code fence.'
-            ),
-            expected_output="Complete executable Python script",
+            description=tmpl["description"],
+            expected_output=tmpl["expected_output"],
             agent=self.coder,
         )
 
@@ -789,33 +758,16 @@ class AstronomyWorkflow(Flow[WorkflowState]):
             f"{self.state.research_question}",
         )
 
+        tmpl = get_task_template("review_task")
+        tmpl["description"] = tmpl["description"].format(
+            generated_code=self.state.generated_code or "",
+            exec_summary=exec_summary,
+            artifact_info=artifact_info,
+            memory_context=memory_context,
+        )
         task = Task(
-            description=(
-                f'Review this Python code AND its execution output.\n\n'
-                f'--- CODE ---\n{self.state.generated_code}\n\n'
-                f'--- EXECUTION OUTPUT ---\n{exec_summary}\n'
-                f'{artifact_info}\n'
-                f'{memory_context}\n'
-                'Check:\n'
-                '1. Did the code execute without errors?\n'
-                '2. Are the results reasonable and correct?\n'
-                '3. Does every plt.plot/scatter/bar have a matching plt.savefig()?\n'
-                '4. Were expected output files actually produced? (see GENERATED FILES)\n'
-                '   If NO output files were produced but the task requires plots/images,\n'
-                '   this MUST be marked NEEDS REVISION.\n'
-                '5. Are all defined functions actually called (not just defined)?\n'
-                '6. Does stdout contain meaningful output?\n\n'
-                'IMPORTANT: If the code ran successfully and produced correct '
-                'results, mark it APPROVED. Only reject if there are real '
-                'errors, missing output files, or clearly wrong results.\n\n'
-                'End your review with EXACTLY one of these verdicts on its own line:\n'
-                'APPROVED\n'
-                'NEEDS REVISION\n\n'
-                'If NEEDS REVISION, list the specific issues as bullet points.'
-            ),
-            expected_output=(
-                "Code review report ending with APPROVED or NEEDS REVISION"
-            ),
+            description=tmpl["description"],
+            expected_output=tmpl["expected_output"],
             agent=self.reviewer,
         )
 

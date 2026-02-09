@@ -1,12 +1,12 @@
 # Core dependencies
-crewai
-crewai-tools
+crewai>=0.102.0
+crewai-tools>=0.37.0
 ollama
 streamlit
 pydantic
 
 # LLM and API
-litellm>=1.60.0,<1.70.0
+litellm>=1.60.0
 openai
 requests
 tiktoken
@@ -19,7 +19,6 @@ numpy
 # Astronomy libraries (for generated code)
 astropy
 matplotlib
-pandas
 
 # Utilities
 python-dotenv

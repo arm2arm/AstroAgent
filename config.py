@@ -1,5 +1,8 @@
 """
-Configuration for CrewAI Astronomy Workflow System
+Configuration for CrewAI 1.9x Workflow System
+
+Simplified single-LLM config loaded from ``.env``.  Agent prompts live in
+``config/agents.yaml`` and ``config/tasks.yaml`` — see ``agents.py``.
 """
 import os
 from dataclasses import dataclass, field
@@ -20,24 +23,8 @@ def _load_dotenv_once() -> None:
 
 
 @dataclass
-class LLMProfile:
-    """A single LLM endpoint profile."""
-    name: str
-    base_url: str
-    api_key: str
-    model: str
-    provider: str = "openai"       # CrewAI native provider: "openai", "anthropic", "azure", "gemini", "bedrock"
-    context_window: int = 32768
-    output_budget: int = 8192
-    embed_model: str = ""          # embedding model name (e.g. "nomic-embed-text:latest")
-    embed_provider: str = "ollama"  # embedding provider: "ollama", "openai", etc.
-    embed_base_url: str = ""       # optional separate embedding endpoint base URL
-    embed_api_key: str = ""        # optional separate embedding API key
-
-
-@dataclass
 class LLMConfig:
-    """Active LLM endpoint configuration (OpenAI-compatible /v1)"""
+    """Active LLM endpoint configuration (OpenAI-compatible /v1)."""
     base_url: str = "http://localhost:11434/v1"
     api_key: str = ""
     model: str = "qwen3-coder:latest"
@@ -69,7 +56,7 @@ class ExecutionConfig:
 
 @dataclass
 class WorkflowConfig:
-    """Workflow execution configuration"""
+    """Workflow execution configuration."""
     max_retries: int = 3
     max_review_iterations: int = 3
     output_dir: str = "outputs/workflows"
@@ -78,59 +65,14 @@ class WorkflowConfig:
 
 
 @dataclass
-class MemoryConfig:
-    """SQLite memory configuration for retrieval-augmented context."""
-    enabled: bool = False
-    db_path: str = ".crewai/memory_astroagent.db"
-    index_paths: list[str] = field(default_factory=lambda: [
-        "README.md",
-        "QUICKSTART.md",
-        "project.md",
-        "example_tasks",
-    ])
-    chunk_tokens: int = 400
-    top_k: int = 4
-    force_reindex: bool = False
-
-
-def load_llm_profiles() -> list[LLMProfile]:
-    """Scan environment for LLM_N_* profiles and return them in order."""
-    _load_dotenv_once()
-    profiles: list[LLMProfile] = []
-    for i in range(1, 20):
-        name = os.getenv(f"LLM_{i}_NAME")
-        if not name:
-            break
-        base_url = os.getenv(f"LLM_{i}_BASE_URL", "")
-        api_key = os.getenv(f"LLM_{i}_API_KEY", "")
-        model = os.getenv(f"LLM_{i}_MODEL", "")
-        context_window = int(os.getenv(f"LLM_{i}_CONTEXT_WINDOW", "32768"))
-        output_budget = int(os.getenv(f"LLM_{i}_OUTPUT_BUDGET", "8192"))
-        embed_model = os.getenv(f"LLM_{i}_EMBED_MODEL", "nomic-embed-text:latest")
-        embed_provider = os.getenv(f"LLM_{i}_EMBED_PROVIDER", "ollama")
-        embed_base_url = os.getenv(f"LLM_{i}_EMBED_BASE_URL", "")
-        embed_api_key = os.getenv(f"LLM_{i}_EMBED_API_KEY", "")
-        llm_provider = os.getenv(f"LLM_{i}_PROVIDER", "openai")
-        profiles.append(
-            LLMProfile(
-                name=name,
-                base_url=base_url,
-                api_key=api_key,
-                model=model,
-                provider=llm_provider,
-                context_window=context_window,
-                output_budget=output_budget,
-                embed_model=embed_model,
-                embed_provider=embed_provider,
-                embed_base_url=embed_base_url,
-                embed_api_key=embed_api_key,
-            )
-        )
-    return profiles
+class StorageConfig:
+    """CrewAI memory / storage configuration (SQLite-backed)."""
+    enabled: bool = True
+    db_path: str = "storage/memory.db"
 
 
 def get_llm_config() -> LLMConfig:
-    """Load active LLM configuration from environment"""
+    """Load active LLM configuration from environment."""
     _load_dotenv_once()
     return LLMConfig(
         base_url=os.getenv("LLM_BASE_URL", "http://localhost:11434/v1"),
@@ -153,9 +95,9 @@ def get_llm_config() -> LLMConfig:
 
 
 def get_crewai_embedder_dict() -> dict | None:
-    """Build the embedder config dict for CrewAI Crew(embedder=...).
+    """Build the embedder config dict for ``Crew(embedder=...)``.
 
-    Returns None if no embed_model is configured (falls back to CrewAI default).
+    Returns ``None`` if no embed_model is configured (falls back to CrewAI default).
     """
     cfg = get_llm_config()
     if not cfg.embed_model:
@@ -172,7 +114,7 @@ def get_crewai_embedder_dict() -> dict | None:
         return {
             "provider": "ollama",
             "config": {
-                "model_name": cfg.embed_model,
+                "model": cfg.embed_model,
                 "url": f"{base}/api/embeddings",
             },
         }
@@ -186,11 +128,11 @@ def get_crewai_embedder_dict() -> dict | None:
             },
         }
     else:
-        # Generic provider — pass model_name + URL, let CrewAI handle it
+        # Generic provider — pass model + URL, let CrewAI handle it
         return {
             "provider": provider,
             "config": {
-                "model_name": cfg.embed_model,
+                "model": cfg.embed_model,
                 "url": base,
             },
         }
@@ -212,7 +154,7 @@ def get_execution_config() -> ExecutionConfig:
 
 
 def get_workflow_config() -> WorkflowConfig:
-    """Load workflow configuration"""
+    """Load workflow configuration."""
     _load_dotenv_once()
     return WorkflowConfig(
         max_retries=int(os.getenv("MAX_RETRIES", "3")),
@@ -223,28 +165,23 @@ def get_workflow_config() -> WorkflowConfig:
     )
 
 
-def get_memory_config() -> MemoryConfig:
-    """Load memory/RAG configuration."""
+def get_storage_config() -> StorageConfig:
+    """Load CrewAI memory/storage configuration."""
     _load_dotenv_once()
-    enabled = os.getenv("MEMORY_ENABLED", "false").lower() in {"1", "true", "yes"}
-    raw_paths = os.getenv(
-        "MEMORY_INDEX_PATHS",
-        "README.md,QUICKSTART.md,project.md,example_tasks",
-    )
-    index_paths = [p.strip() for p in raw_paths.split(",") if p.strip()]
-    return MemoryConfig(
+    enabled = os.getenv("MEMORY_ENABLED", "true").lower() in {"1", "true", "yes"}
+    return StorageConfig(
         enabled=enabled,
-        db_path=os.getenv("MEMORY_DB_PATH", ".crewai/memory_astroagent.db"),
-        index_paths=index_paths,
-        chunk_tokens=int(os.getenv("MEMORY_CHUNK_TOKENS", "400")),
-        top_k=int(os.getenv("MEMORY_TOP_K", "4")),
-        force_reindex=os.getenv("MEMORY_FORCE_REINDEX", "false").lower() in {"1", "true", "yes"},
+        db_path=os.getenv("MEMORY_DB_PATH", "storage/memory.db"),
     )
 
 
-def init_directories():
-    """Create necessary directories"""
+def init_directories() -> None:
+    """Create necessary directories."""
     _load_dotenv_once()
     config = get_workflow_config()
     os.makedirs(config.output_dir, exist_ok=True)
     os.makedirs(config.results_dir, exist_ok=True)
+    # Ensure storage directory exists
+    storage = get_storage_config()
+    if storage.enabled:
+        os.makedirs(os.path.dirname(storage.db_path) or ".", exist_ok=True)
