@@ -247,6 +247,7 @@ def _run_code_in_docker_direct(
 
     Returns (stdout, stderr).
     """
+    results_dir = os.path.abspath(results_dir)
     os.makedirs(results_dir, exist_ok=True)
 
     container_name = "code-interpreter-direct"
@@ -335,8 +336,8 @@ class AstronomyWorkflow(Flow[WorkflowState]):
         super().__init__(state=state)
 
         # Per-workflow results directory
-        self._results_dir = os.path.join(
-            self.wf_config.results_dir, self.state.workflow_id
+        self._results_dir = os.path.abspath(
+            os.path.join(self.wf_config.results_dir, self.state.workflow_id)
         )
         os.makedirs(self._results_dir, exist_ok=True)
 
