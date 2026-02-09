@@ -7,8 +7,16 @@ from dataclasses import dataclass, field
 from dotenv import load_dotenv
 
 
-# Load .env once at import time so config reads updated values.
-load_dotenv()
+_DOTENV_LOADED = False
+
+
+def _load_dotenv_once() -> None:
+    """Load .env once per process to avoid repeated filesystem work."""
+    global _DOTENV_LOADED
+    if _DOTENV_LOADED:
+        return
+    load_dotenv()
+    _DOTENV_LOADED = True
 
 
 @dataclass
@@ -18,6 +26,7 @@ class LLMProfile:
     base_url: str
     api_key: str
     model: str
+    provider: str = "openai"       # CrewAI native provider: "openai", "anthropic", "azure", "gemini", "bedrock"
     context_window: int = 32768
     output_budget: int = 8192
     embed_model: str = ""          # embedding model name (e.g. "nomic-embed-text:latest")
@@ -32,6 +41,7 @@ class LLMConfig:
     base_url: str = "http://localhost:11434/v1"
     api_key: str = ""
     model: str = "qwen3-coder:latest"
+    provider: str = "openai"           # CrewAI native provider name
     temperature: float = 0.3
     max_tokens: int = 4000
     timeout: int = 120
@@ -85,6 +95,7 @@ class MemoryConfig:
 
 def load_llm_profiles() -> list[LLMProfile]:
     """Scan environment for LLM_N_* profiles and return them in order."""
+    _load_dotenv_once()
     profiles: list[LLMProfile] = []
     for i in range(1, 20):
         name = os.getenv(f"LLM_{i}_NAME")
@@ -99,12 +110,14 @@ def load_llm_profiles() -> list[LLMProfile]:
         embed_provider = os.getenv(f"LLM_{i}_EMBED_PROVIDER", "ollama")
         embed_base_url = os.getenv(f"LLM_{i}_EMBED_BASE_URL", "")
         embed_api_key = os.getenv(f"LLM_{i}_EMBED_API_KEY", "")
+        llm_provider = os.getenv(f"LLM_{i}_PROVIDER", "openai")
         profiles.append(
             LLMProfile(
                 name=name,
                 base_url=base_url,
                 api_key=api_key,
                 model=model,
+                provider=llm_provider,
                 context_window=context_window,
                 output_budget=output_budget,
                 embed_model=embed_model,
@@ -118,10 +131,12 @@ def load_llm_profiles() -> list[LLMProfile]:
 
 def get_llm_config() -> LLMConfig:
     """Load active LLM configuration from environment"""
+    _load_dotenv_once()
     return LLMConfig(
         base_url=os.getenv("LLM_BASE_URL", "http://localhost:11434/v1"),
         api_key=os.getenv("LLM_API_KEY", ""),
         model=os.getenv("LLM_MODEL", "qwen3-coder:latest"),
+        provider=os.getenv("LLM_PROVIDER", "openai"),
         temperature=float(os.getenv("LLM_TEMPERATURE", "0.3")),
         max_tokens=int(os.getenv("LLM_MAX_TOKENS", "4000")),
         timeout=int(os.getenv("LLM_TIMEOUT", "120")),
@@ -183,6 +198,7 @@ def get_crewai_embedder_dict() -> dict | None:
 
 def get_execution_config() -> ExecutionConfig:
     """Load code-execution environment configuration."""
+    _load_dotenv_once()
     pre_install_str = os.getenv(
         "EXEC_PRE_INSTALL",
         "numpy,pandas,matplotlib,astropy,scipy"
@@ -197,6 +213,7 @@ def get_execution_config() -> ExecutionConfig:
 
 def get_workflow_config() -> WorkflowConfig:
     """Load workflow configuration"""
+    _load_dotenv_once()
     return WorkflowConfig(
         max_retries=int(os.getenv("MAX_RETRIES", "3")),
         max_review_iterations=int(os.getenv("MAX_REVIEW_ITERATIONS", "3")),
@@ -208,6 +225,7 @@ def get_workflow_config() -> WorkflowConfig:
 
 def get_memory_config() -> MemoryConfig:
     """Load memory/RAG configuration."""
+    _load_dotenv_once()
     enabled = os.getenv("MEMORY_ENABLED", "false").lower() in {"1", "true", "yes"}
     raw_paths = os.getenv(
         "MEMORY_INDEX_PATHS",
@@ -226,6 +244,7 @@ def get_memory_config() -> MemoryConfig:
 
 def init_directories():
     """Create necessary directories"""
+    _load_dotenv_once()
     config = get_workflow_config()
     os.makedirs(config.output_dir, exist_ok=True)
     os.makedirs(config.results_dir, exist_ok=True)

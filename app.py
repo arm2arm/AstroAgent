@@ -33,9 +33,6 @@ from config import (
     load_llm_profiles,
 )
 
-# Initialize
-init_directories()
-
 # Page config
 st.set_page_config(
     page_title="CrewAI Workflows",
@@ -109,13 +106,37 @@ if "current_workflow" not in st.session_state:
 # Helpers
 # ---------------------------------------------------------------------------
 
+@st.cache_resource(show_spinner=False)
+def _init_directories_once() -> None:
+    init_directories()
+
 def load_example_tasks(task_dir: Path) -> list[dict]:
     """Load example tasks from YAML files."""
-    tasks = []
+    signature = _example_tasks_signature(task_dir)
+    return _load_example_tasks_cached(str(task_dir), signature)
+
+
+def _example_tasks_signature(task_dir: Path) -> tuple[tuple[str, float], ...]:
     if not task_dir.exists():
+        return ()
+    files = sorted(task_dir.glob("*.yaml"))
+    signature: list[tuple[str, float]] = []
+    for path in files:
+        try:
+            signature.append((path.name, path.stat().st_mtime))
+        except OSError:
+            continue
+    return tuple(signature)
+
+
+@st.cache_data(ttl=300, show_spinner=False)
+def _load_example_tasks_cached(task_dir: str, signature: tuple[tuple[str, float], ...]) -> list[dict]:
+    tasks = []
+    base = Path(task_dir)
+    if not base.exists():
         return tasks
 
-    for task_file in sorted(task_dir.glob("*.yaml")):
+    for task_file in sorted(base.glob("*.yaml")):
         try:
             with task_file.open("r", encoding="utf-8") as handle:
                 data = yaml.safe_load(handle) or {}
@@ -251,6 +272,7 @@ def _active_profile():
         base_url=cfg.base_url,
         api_key=cfg.api_key,
         model=cfg.model,
+        provider=cfg.provider,
         context_window=cfg.context_window,
         output_budget=cfg.output_budget,
         embed_model=cfg.embed_model,
@@ -270,6 +292,7 @@ def apply_llm_overrides():
     os.environ["LLM_BASE_URL"] = base_url
     os.environ["LLM_API_KEY"] = api_key
     os.environ["LLM_MODEL"] = st.session_state.get("llm_model_choice", profile.model)
+    os.environ["LLM_PROVIDER"] = getattr(profile, "provider", "openai")
     os.environ["LLM_CONTEXT_WINDOW"] = str(profile.context_window)
     os.environ["LLM_OUTPUT_BUDGET"] = str(profile.output_budget)
     # Embedding model config for CrewAI memory
@@ -324,6 +347,7 @@ def fetch_available_models(base_url: str, api_key: str) -> list[str]:
 
 def main():
     """Main dashboard."""
+    _init_directories_once()
     init_llm_session_state()
     apply_llm_overrides()
 
@@ -836,22 +860,28 @@ def render_config_page():
 
     # -- System Info --
     st.markdown("### 📊 System Information")
-    try:
-        crewai_version = metadata.version("crewai")
-    except metadata.PackageNotFoundError:
-        crewai_version = "not installed"
-    try:
-        crewai_tools_version = metadata.version("crewai-tools")
-    except metadata.PackageNotFoundError:
-        crewai_tools_version = "not installed"
+    if st.button("Load System Info", key="load_sys_info"):
+        st.session_state["show_sys_info"] = True
 
-    st.markdown(f"""
-    - **Python Version:** {sys.version.split()[0]}
-    - **Streamlit Version:** {st.__version__}
-    - **CrewAI Version:** {crewai_version}
-    - **CrewAI Tools Version:** {crewai_tools_version}
-    - **Working Directory:** `{os.getcwd()}`
-    """)
+    if st.session_state.get("show_sys_info"):
+        try:
+            crewai_version = metadata.version("crewai")
+        except metadata.PackageNotFoundError:
+            crewai_version = "not installed"
+        try:
+            crewai_tools_version = metadata.version("crewai-tools")
+        except metadata.PackageNotFoundError:
+            crewai_tools_version = "not installed"
+
+        st.markdown(f"""
+        - **Python Version:** {sys.version.split()[0]}
+        - **Streamlit Version:** {st.__version__}
+        - **CrewAI Version:** {crewai_version}
+        - **CrewAI Tools Version:** {crewai_tools_version}
+        - **Working Directory:** `{os.getcwd()}`
+        """)
+    else:
+        st.markdown("System info is loaded on demand to speed up page render.")
 
 
 if __name__ == "__main__":

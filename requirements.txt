@@ -6,10 +6,11 @@ streamlit
 pydantic
 
 # LLM and API
-litellm
+litellm>=1.60.0,<1.70.0
 openai
 requests
 tiktoken
+mcp~=1.23.1
 
 # Data handling
 pandas

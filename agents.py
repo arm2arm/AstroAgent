@@ -34,17 +34,23 @@ def create_llm(
 ) -> LLM:
     """Create LLM instance for an OpenAI-compatible endpoint.
 
-    Falls back to returning a model string if the LLM wrapper cannot initialize.
+    Uses the ``provider`` kwarg so CrewAI routes directly to its native
+    provider class (e.g. ``OpenAICompletion``), bypassing model-name
+    pattern validation and the LiteLLM fallback.
     """
     config = get_llm_config()
     model_name = model_override or config.model
-    if model_name.startswith(("openai/", "azure/", "ollama/")):
-        model_id = model_name
-    else:
-        model_id = f"openai/{model_name}"
+    provider = config.provider or "openai"
+
+    # Strip any leftover provider prefix – the provider kwarg handles routing.
+    for pfx in ("openai/", "azure/", "ollama/"):
+        if model_name.startswith(pfx):
+            model_name = model_name[len(pfx):]
+            break
 
     llm = LLM(
-        model=model_id,
+        model=model_name,
+        provider=provider,
         base_url=config.base_url,
         api_key=config.api_key or "no-key-required",
         temperature=temperature,
