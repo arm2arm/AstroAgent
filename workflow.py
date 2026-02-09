@@ -95,6 +95,49 @@ def _extract_code_block(text: str) -> str:
     return m.group(1).strip() if m else text.strip()
 
 
+def _sanitize_code(code: str) -> str:
+    """Fix common LLM code-generation mistakes before execution.
+
+    Repairs:
+    - ``matplotlib.use(...)`` without a preceding ``import matplotlib``
+    - ``plt.show()`` calls (not compatible with headless Docker)
+    - Removes blank lines between every line (LLM sometimes double-spaces)
+    """
+    lines = code.splitlines()
+    out: list[str] = []
+    has_import_mpl = False
+
+    # Collapse runs of blank lines to at most one
+    prev_blank = False
+    for line in lines:
+        if line.strip() == "":
+            if prev_blank:
+                continue
+            prev_blank = True
+        else:
+            prev_blank = False
+
+        stripped = line.strip()
+
+        # Track whether 'import matplotlib' already appeared
+        if stripped in ("import matplotlib", "import matplotlib as mpl"):
+            has_import_mpl = True
+
+        # Insert 'import matplotlib' before matplotlib.use(...) if missing
+        if not has_import_mpl and stripped.startswith("matplotlib.use("):
+            out.append("import matplotlib")
+            has_import_mpl = True
+
+        # Remove plt.show() — incompatible with Agg backend / headless
+        if stripped == "plt.show()" or stripped.startswith("plt.show("):
+            out.append("# plt.show()  # removed for headless execution")
+            continue
+
+        out.append(line)
+
+    return "\n".join(out)
+
+
 def _discover_artifacts(results_dir: str) -> list[str]:
     """Find image files produced by execution in *results_dir*."""
     patterns = ("*.png", "*.jpg", "*.jpeg", "*.svg", "*.pdf")
@@ -129,13 +172,18 @@ def _run_code_in_docker_direct(
         stderr=subprocess.DEVNULL,
     )
 
+    # Write script to results dir so it's available inside the container
+    script_path = os.path.join(results_dir, "_run_script.py")
+    with open(script_path, "w") as f:
+        f.write(code)
+
     # Install libraries inside the container and run code
     install_cmds = ""
     if libraries:
         pkgs = " ".join(libraries)
         install_cmds = f"pip install --quiet {pkgs} 2>/dev/null; "
 
-    shell_cmd = f'{install_cmds}python3 -c {_shell_quote(code)}'
+    shell_cmd = f'{install_cmds}python3 /workspace/_run_script.py'
 
     cmd = [
         "docker", "run",
@@ -164,12 +212,12 @@ def _run_code_in_docker_direct(
         return "", f"Execution timed out after {timeout}s"
     except Exception as exc:
         return "", f"Docker direct execution failed: {exc}"
-
-
-def _shell_quote(s: str) -> str:
-    """Shell-quote a string for safe embedding in sh -c '...'."""
-    import shlex
-    return shlex.quote(s)
+    finally:
+        # Clean up temp script
+        try:
+            os.remove(script_path)
+        except OSError:
+            pass
 
 
 # ---------------------------------------------------------------------------
@@ -537,7 +585,8 @@ class AstronomyWorkflow(Flow[WorkflowState]):
         self._apply_token_budget(task, [self.coder])
         crew = self._make_crew([self.coder], [task])
         result = crew.kickoff()
-        self.state.generated_code = _extract_code_block(self._get_result_text(result))
+        raw_code = _extract_code_block(self._get_result_text(result))
+        self.state.generated_code = _sanitize_code(raw_code)
         self._save_code()
         return {"generated_code": self.state.generated_code}
 
@@ -564,7 +613,9 @@ class AstronomyWorkflow(Flow[WorkflowState]):
         print("\n--- Executing Code in Docker Sandbox...")
         self.state.status = "executing"
 
-        code_text = self.state.generated_code or ""
+        code_text = _sanitize_code(self.state.generated_code or "")
+        # Persist the sanitized version back so review/save use the fixed code
+        self.state.generated_code = code_text
         if not code_text.strip():
             self.state.execution_stderr = "No code to execute."
             return {
