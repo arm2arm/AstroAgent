@@ -33,6 +33,7 @@ class LLMConfig:
     max_tokens: int = 4000
     timeout: int = 120
     context_window: int = 32768
+    num_ctx: int = 0               # Ollama num_ctx (0 = use context_window)
     output_budget: int = 8192
     safety_margin: int = 512
     summary_trigger_tokens: int = 2000
@@ -83,6 +84,7 @@ def get_llm_config() -> LLMConfig:
         max_tokens=int(os.getenv("LLM_MAX_TOKENS", "4000")),
         timeout=int(os.getenv("LLM_TIMEOUT", "120")),
         context_window=int(os.getenv("LLM_CONTEXT_WINDOW", "32768")),
+        num_ctx=int(os.getenv("LLM_NUM_CTX", "0")),
         output_budget=int(os.getenv("LLM_OUTPUT_BUDGET", "8192")),
         safety_margin=int(os.getenv("LLM_SAFETY_MARGIN", "512")),
         summary_trigger_tokens=int(os.getenv("LLM_SUMMARY_TRIGGER_TOKENS", "2000")),

@@ -96,6 +96,9 @@ def build_llm(
             model_name = model_name[len(pfx):]
             break
 
+    # Determine num_ctx for Ollama (fallback to context_window)
+    num_ctx = cfg.num_ctx if cfg.num_ctx > 0 else cfg.context_window
+
     llm = LLM(
         model=model_name,
         provider=provider,
@@ -104,6 +107,7 @@ def build_llm(
         temperature=temperature,
         max_tokens=max_tokens_override if max_tokens_override is not None else cfg.max_tokens,
         timeout=cfg.timeout,
+        extra_body={"num_ctx": num_ctx} if num_ctx > 0 else None,
     )
     if cfg.context_window > 0:
         llm.context_window_size = int(cfg.context_window * CONTEXT_WINDOW_USAGE_RATIO)

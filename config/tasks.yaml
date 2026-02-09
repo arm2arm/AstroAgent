@@ -52,7 +52,18 @@ coding_task:
 
     CRITICAL requirements:
     - Use ONLY these libraries (already installed): {pre_install}
-    - PRINT all key results to stdout
+    - PRINT all key results to stdout.
+    - Write FLAT executable code that runs top-to-bottom.
+      If you define helper functions, you MUST call them:
+        if __name__ == "__main__":
+            main()
+    - Include proper error handling.
+    - The script must work standalone (no external data files
+      unless explicitly requested).
+    - For simple tasks use numpy/scipy to generate data directly —
+      do NOT fetch remote datasets.
+
+    ONLY if the task involves plotting or visualization:
     - Set up matplotlib for headless rendering:
         import matplotlib
         matplotlib.use("Agg")
@@ -61,14 +72,9 @@ coding_task:
         plt.savefig("descriptive_name.png", dpi=150, bbox_inches="tight")
         print("SAVED: descriptive_name.png")
     - NEVER call plt.show()
-    - Write FLAT executable code that runs top-to-bottom.
-      If you define helper functions, you MUST call them:
-        if __name__ == "__main__":
-            main()
-    - Include proper error handling
-    - The script must work standalone (no external data files)
-    - For simple tasks like plotting math functions, use numpy
-      to generate data directly — do NOT fetch remote data.
+
+    If the task does NOT involve plotting, do NOT import matplotlib
+    or produce image files. Printed results are valid output.
 
     Return ONLY the Python code inside a ```python code fence.
   expected_output: >
@@ -77,6 +83,7 @@ coding_task:
 review_task:
   description: >
     Review this Python code AND its execution output.
+    The ORIGINAL USER REQUEST was: "{research_question}"
 
     --- CODE ---
     {generated_code}
@@ -88,17 +95,19 @@ review_task:
 
     Check:
     1. Did the code execute without errors?
-    2. Are the results reasonable and correct?
-    3. Does every plt.plot/scatter/bar have a matching plt.savefig()?
-    4. Were expected output files actually produced? (see GENERATED FILES)
-       If NO output files were produced but the task requires plots/images,
-       this MUST be marked NEEDS REVISION.
+    2. Does the code address the ORIGINAL USER REQUEST?
+    3. If the task required plots/images:
+       a. Does every plt.plot/scatter/bar have a matching plt.savefig()?
+       b. Were expected output files actually produced? (see GENERATED FILES)
+       c. If NO output files for a plotting task → NEEDS REVISION.
+    4. If the task did NOT require plots, do NOT reject just because
+       no image files were produced. Printed results are valid output.
     5. Are all defined functions actually called (not just defined)?
     6. Does stdout contain meaningful output?
 
     IMPORTANT: If the code ran successfully and produced correct
-    results, mark it APPROVED. Only reject if there are real
-    errors, missing output files, or clearly wrong results.
+    results matching the user's request, mark it APPROVED. Only
+    reject if there are real errors or clearly wrong results.
 
     End your review with EXACTLY one of these verdicts on its own line:
     APPROVED

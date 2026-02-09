@@ -800,6 +800,31 @@ if __name__ == "__main__":
 
     if args.question:
         from workflow import AstronomyWorkflow, WorkflowState
+        from importlib import metadata as _meta
+
+        cfg = get_llm_config()
+        num_ctx = cfg.num_ctx if cfg.num_ctx > 0 else cfg.context_window
+        print("\n" + "=" * 60)
+        print("  AstroAgent  —  CLI Mode")
+        print("=" * 60)
+        print(f"  Model       : {cfg.model}")
+        print(f"  Provider    : {cfg.provider}")
+        print(f"  Endpoint    : {cfg.base_url}")
+        print(f"  num_ctx     : {num_ctx}")
+        print(f"  max_tokens  : {cfg.max_tokens}")
+        print(f"  temperature : {cfg.temperature}")
+        print(f"  ctx_window  : {cfg.context_window}")
+        _versions = []
+        for _pkg in ("crewai", "litellm", "openai", "pydantic"):
+            try:
+                _versions.append(f"{_pkg}={_meta.version(_pkg)}")
+            except Exception:
+                pass
+        print(f"  packages    : {', '.join(_versions)}")
+        print("=" * 60)
+        print(f"  Question    : {args.question}")
+        print(f"  Complexity  : {args.complexity}")
+        print("=" * 60 + "\n")
 
         state = WorkflowState(
             research_question=args.question,

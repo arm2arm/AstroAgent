@@ -760,6 +760,7 @@ class AstronomyWorkflow(Flow[WorkflowState]):
 
         tmpl = get_task_template("review_task")
         tmpl["description"] = tmpl["description"].format(
+            research_question=self.state.research_question,
             generated_code=self.state.generated_code or "",
             exec_summary=exec_summary,
             artifact_info=artifact_info,
