@@ -34,7 +34,6 @@ import inspect
 from agents import (
     create_analyst_agent,
     create_coder_agent,
-    create_executor_agent,
     create_planner_agent,
     create_reviewer_agent,
     create_summarizer_agent,
@@ -100,24 +99,70 @@ def _sanitize_code(code: str) -> str:
 
     Repairs:
     - ``matplotlib.use(...)`` without a preceding ``import matplotlib``
-    - ``plt.show()`` calls (not compatible with headless Docker)
+    - ``plt.show()`` calls → replaced with ``plt.savefig`` when missing
+    - Ensures ``matplotlib.use('Agg')`` is present when pyplot is imported
+    - Detects functions that create plots but are never called, and adds
+      calls at the bottom of the script
     - Removes blank lines between every line (LLM sometimes double-spaces)
     """
     lines = code.splitlines()
     out: list[str] = []
     has_import_mpl = False
+    has_mpl_use_agg = False
+    has_savefig = False
+    has_pyplot_import = False
+    show_lines: list[int] = []           # indices in *out* of plt.show() lines
+    defined_funcs: set[str] = set()      # function names defined in the script
+    called_names: set[str] = set()       # names that appear as calls
+    plot_funcs: set[str] = set()         # functions that contain plt.* calls
 
-    # Collapse runs of blank lines to at most one
-    prev_blank = False
+    # --- First pass: collect info ---
+    current_func: str | None = None
     for line in lines:
-        if line.strip() == "":
+        s = line.strip()
+        # Track function definitions
+        if s.startswith("def ") and s.endswith(":"):
+            fname = s[4:s.index("(")].strip() if "(" in s else None
+            if fname:
+                defined_funcs.add(fname)
+                current_func = fname
+        elif s and not s.startswith(" ") and not s.startswith("\t") and not s.startswith("#"):
+            # Top-level non-function code
+            current_func = None
+
+        # Track plot-related calls inside functions
+        if current_func and ("plt." in s or "savefig" in s or "ax." in s):
+            plot_funcs.add(current_func)
+
+        # Track savefig
+        if "savefig" in s:
+            has_savefig = True
+        if "import matplotlib.pyplot" in s or "from matplotlib" in s:
+            has_pyplot_import = True
+        if s in ("import matplotlib", "import matplotlib as mpl"):
+            has_import_mpl = True
+        if "matplotlib.use(" in s:
+            has_mpl_use_agg = True
+
+        # Track function calls (simple heuristic)
+        for fn in defined_funcs:
+            if f"{fn}(" in s and not s.startswith("def "):
+                called_names.add(fn)
+
+    # --- Second pass: build output with fixes ---
+    prev_blank = False
+    savefig_counter = [0]     # mutable counter for auto-generated filenames
+
+    for line in lines:
+        stripped = line.strip()
+
+        # Collapse runs of blank lines to at most one
+        if stripped == "":
             if prev_blank:
                 continue
             prev_blank = True
         else:
             prev_blank = False
-
-        stripped = line.strip()
 
         # Track whether 'import matplotlib' already appeared
         if stripped in ("import matplotlib", "import matplotlib as mpl"):
@@ -128,12 +173,52 @@ def _sanitize_code(code: str) -> str:
             out.append("import matplotlib")
             has_import_mpl = True
 
-        # Remove plt.show() — incompatible with Agg backend / headless
+        # Replace plt.show() with plt.savefig() if no savefig exists
         if stripped == "plt.show()" or stripped.startswith("plt.show("):
-            out.append("# plt.show()  # removed for headless execution")
+            if not has_savefig:
+                # Insert savefig before the show
+                indent = line[: len(line) - len(line.lstrip())]
+                savefig_counter[0] += 1
+                fname = f"output_{savefig_counter[0]}.png" if savefig_counter[0] > 1 else "output.png"
+                out.append(f'{indent}plt.savefig("{fname}", dpi=150, bbox_inches="tight")')
+                out.append(f'{indent}print("SAVED: {fname}")')
+            out.append(line[: len(line) - len(line.lstrip())] + "# plt.show()  # removed for headless execution")
             continue
 
         out.append(line)
+
+    # --- Post-pass: add missing function calls at the bottom ---
+    uncalled_plot_funcs = sorted(plot_funcs - called_names)
+    # Also check for any defined-but-uncalled functions that look like
+    # they do useful work (heuristic: name contains 'plot', 'save', 'generate', 'create', 'run', 'main')
+    action_keywords = {"plot", "save", "generate", "create", "run", "main", "draw", "compute", "calculate", "analyze"}
+    uncalled_action_funcs = sorted(
+        fn for fn in (defined_funcs - called_names - plot_funcs)
+        if any(kw in fn.lower() for kw in action_keywords)
+    )
+    funcs_to_call = uncalled_plot_funcs + uncalled_action_funcs
+
+    if funcs_to_call:
+        out.append("")
+        out.append("# --- Auto-added: call defined functions ---")
+        out.append('if __name__ == "__main__":')
+        for fn in funcs_to_call:
+            out.append(f"    {fn}()")
+
+    # --- Ensure Agg backend is set when pyplot is imported ---
+    if has_pyplot_import and not has_mpl_use_agg:
+        # Insert matplotlib.use('Agg') right before the first pyplot import
+        new_out: list[str] = []
+        inserted = False
+        for line in out:
+            s = line.strip()
+            if not inserted and ("import matplotlib.pyplot" in s or "from matplotlib import pyplot" in s):
+                if not has_import_mpl:
+                    new_out.append("import matplotlib")
+                new_out.append("matplotlib.use('Agg')")
+                inserted = True
+            new_out.append(line)
+        out = new_out
 
     return "\n".join(out)
 
@@ -244,7 +329,6 @@ class AstronomyWorkflow(Flow[WorkflowState]):
         self._planner = None
         self._analyst = None
         self._coder = None
-        self._executor = None
         self._reviewer = None
         self._summarizer = None
 
@@ -280,12 +364,6 @@ class AstronomyWorkflow(Flow[WorkflowState]):
         if self._coder is None:
             self._coder = create_coder_agent()
         return self._coder
-
-    @property
-    def executor(self):
-        if self._executor is None:
-            self._executor = create_executor_agent()
-        return self._executor
 
     @property
     def reviewer(self):
@@ -565,13 +643,18 @@ class AstronomyWorkflow(Flow[WorkflowState]):
                 f'CRITICAL requirements:\n'
                 f'- Use ONLY these libraries (already installed): {pre_install}\n'
                 f'- PRINT all key results to stdout\n'
-                f'- For plots: use matplotlib with Agg backend:\n'
+                f'- Set up matplotlib for headless rendering:\n'
                 f'    import matplotlib\n'
                 f'    matplotlib.use("Agg")\n'
                 f'    import matplotlib.pyplot as plt\n'
-                f'- Save ALL plots to the CURRENT WORKING DIRECTORY, e.g.:\n'
-                f'    plt.savefig("plot.png", dpi=150, bbox_inches="tight")\n'
-                f'- After saving, print the filename: print("SAVED: plot.png")\n'
+                f'- Save ALL plots to the CURRENT WORKING DIRECTORY:\n'
+                f'    plt.savefig("descriptive_name.png", dpi=150, bbox_inches="tight")\n'
+                f'    print("SAVED: descriptive_name.png")\n'
+                f'- NEVER call plt.show()\n'
+                f'- Write FLAT executable code that runs top-to-bottom.\n'
+                f'  If you define helper functions, you MUST call them:\n'
+                f'    if __name__ == "__main__":\n'
+                f'        main()\n'
                 f'- Include proper error handling\n'
                 f'- The script must work standalone (no external data files)\n'
                 f'- For simple tasks like plotting math functions, use numpy\n'
@@ -605,10 +688,11 @@ class AstronomyWorkflow(Flow[WorkflowState]):
     def _execution_phase(self) -> Dict[str, Any]:
         """Run the generated code inside a Docker sandbox.
 
-        Strategy:
-        1. Try via the CrewAI executor agent + CodeInterpreterTool.
-        2. If the agent returns empty / hallucinated output (no real tool
-           call), fall back to direct Docker execution.
+        Strategy — direct-first:
+        1. Run the code **directly** in Docker (reliable, no LLM involved).
+        2. Record stdout/stderr and discover artifacts.
+        3. If the code failed (non-empty stderr with errors), the review
+           phase will request a revision — no need for an LLM executor.
         """
         print("\n--- Executing Code in Docker Sandbox...")
         self.state.status = "executing"
@@ -623,89 +707,33 @@ class AstronomyWorkflow(Flow[WorkflowState]):
                 "execution_stderr": self.state.execution_stderr,
             }
 
-        # Clean up any leftover code-interpreter container from previous runs
-        subprocess.run(
-            ["docker", "rm", "-f", "code-interpreter"],
-            stdout=subprocess.DEVNULL,
-            stderr=subprocess.DEVNULL,
-        )
-
-        pre_install = ", ".join(self.exec_config.pre_install)
-        escaped_code = code_text.replace('\\', '\\\\').replace('`', '\\`')
-
-        task = Task(
-            description=(
-                'You have a single tool: Code Interpreter.\n'
-                'Use it to execute the Python code below.\n\n'
-                'INSTRUCTIONS:\n'
-                '1. Call the code_interpreter tool with the EXACT code below '
-                'as the "code" argument.\n'
-                '2. For "libraries_used" pass: '
-                f'[{chr(34) + (chr(34) + ", " + chr(34)).join(self.exec_config.pre_install) + chr(34)}]\n'
-                '3. Do NOT modify, summarize or rewrite the code.\n'
-                '4. Respond with a SINGLE tool call and nothing else.\n'
-                '5. The tool input MUST be valid JSON with double-quoted keys.\n'
-                '   Example format: {"code": "<CODE>", "libraries_used": ["numpy", "pandas"]}\n'
-                '6. Return the COMPLETE output from the tool.\n\n'
-                f'CODE TO EXECUTE:\n'
-                f'{escaped_code}'
-            ),
-            expected_output=(
-                "The complete stdout/stderr output from running the code."
-            ),
-            agent=self.executor,
-        )
-
-        self._apply_token_budget(task, [self.executor])
-        crew = self._make_crew([self.executor], [task])
-
-        # Change CWD to results dir so CodeInterpreterTool bind-mounts it
-        # into the Docker container at /workspace — any files saved by the
-        # script will appear here on the host.
         os.makedirs(self._results_dir, exist_ok=True)
-        prev_cwd = os.getcwd()
-        os.chdir(self._results_dir)
-        try:
-            result = crew.kickoff()
-        finally:
-            os.chdir(prev_cwd)
 
-        output = self._get_result_text(result)
-
-        # Detect whether the executor actually ran the tool.  If the output
-        # is empty or doesn't look like real execution output, fall back to
-        # running the code directly in Docker.
-        artifacts_after_crew = _discover_artifacts(self._results_dir)
-        tool_actually_ran = bool(
-            artifacts_after_crew
-            or "SAVED:" in output
-            or "Traceback" in output
-            or len(output.strip()) > 80
+        print(f"   >> Running code directly in Docker ({self.exec_config.image})...")
+        stdout, stderr = _run_code_in_docker_direct(
+            code=code_text,
+            image=self.exec_config.image,
+            results_dir=self._results_dir,
+            libraries=self.exec_config.pre_install,
+            timeout=self.wf_config.max_retries * 120,
         )
 
-        if not tool_actually_ran:
-            print("   >> Executor did not call tool — falling back to direct Docker execution")
-            stdout, stderr = _run_code_in_docker_direct(
-                code=code_text,
-                image=self.exec_config.image,
-                results_dir=self._results_dir,
-                libraries=self.exec_config.pre_install,
-                timeout=self.wf_config.max_retries * 120,
-            )
-            output = stdout or stderr
-            if stderr and "error" in stderr.lower():
-                self.state.execution_stderr = stderr
-                self.state.execution_stdout = stdout
-            else:
-                self.state.execution_stdout = output
-                self.state.execution_stderr = ""
+        # Classify output
+        if stderr and ("error" in stderr.lower() or "traceback" in stderr.lower()):
+            self.state.execution_stderr = stderr
+            self.state.execution_stdout = stdout
         else:
-            if "error" in output.lower() or "traceback" in output.lower():
-                self.state.execution_stderr = output
-                self.state.execution_stdout = ""
-            else:
-                self.state.execution_stdout = output
-                self.state.execution_stderr = ""
+            # Some programs write informational messages to stderr; combine
+            combined = stdout
+            if stderr:
+                combined = f"{stdout}\n--- stderr ---\n{stderr}" if stdout else stderr
+            self.state.execution_stdout = combined
+            self.state.execution_stderr = ""
+
+        if stdout:
+            print(f"   >> stdout ({len(stdout)} chars)")
+        if stderr:
+            print(f"   >> stderr ({len(stderr)} chars)")
 
         # Discover any generated artifact files
         self.state.execution_artifacts = _discover_artifacts(self._results_dir)
@@ -742,6 +770,19 @@ class AstronomyWorkflow(Flow[WorkflowState]):
         exec_summary = self.state.execution_stdout or self.state.execution_stderr or "(no output)"
         exec_summary = self._summarize_if_needed(exec_summary, "execution output")
 
+        # Build artifact summary for the reviewer
+        artifact_names = [os.path.basename(a) for a in self.state.execution_artifacts]
+        if artifact_names:
+            artifact_info = (
+                f"\n--- GENERATED FILES ---\n"
+                f"The code produced these files: {', '.join(artifact_names)}\n"
+            )
+        else:
+            artifact_info = (
+                "\n--- GENERATED FILES ---\n"
+                "No output files (images, etc.) were produced.\n"
+            )
+
         memory_context = self._retrieve_memory(
             "review",
             f"{self.state.research_question}",
@@ -751,16 +792,21 @@ class AstronomyWorkflow(Flow[WorkflowState]):
             description=(
                 f'Review this Python code AND its execution output.\n\n'
                 f'--- CODE ---\n{self.state.generated_code}\n\n'
-                f'--- EXECUTION OUTPUT ---\n{exec_summary}\n\n'
+                f'--- EXECUTION OUTPUT ---\n{exec_summary}\n'
+                f'{artifact_info}\n'
                 f'{memory_context}\n'
                 'Check:\n'
                 '1. Did the code execute without errors?\n'
                 '2. Are the results reasonable and correct?\n'
-                '3. Are plots saved to files (not shown interactively)?\n'
-                '4. Does stdout contain meaningful output?\n\n'
+                '3. Does every plt.plot/scatter/bar have a matching plt.savefig()?\n'
+                '4. Were expected output files actually produced? (see GENERATED FILES)\n'
+                '   If NO output files were produced but the task requires plots/images,\n'
+                '   this MUST be marked NEEDS REVISION.\n'
+                '5. Are all defined functions actually called (not just defined)?\n'
+                '6. Does stdout contain meaningful output?\n\n'
                 'IMPORTANT: If the code ran successfully and produced correct '
                 'results, mark it APPROVED. Only reject if there are real '
-                'errors or clearly wrong results.\n\n'
+                'errors, missing output files, or clearly wrong results.\n\n'
                 'End your review with EXACTLY one of these verdicts on its own line:\n'
                 'APPROVED\n'
                 'NEEDS REVISION\n\n'
