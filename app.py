@@ -3,6 +3,7 @@ Streamlit Dashboard for CrewAI Multi-Agent Workflows
 Production-ready UI with clean design
 """
 import os
+import argparse
 
 # Disable CrewAI telemetry to avoid signal handling in background threads.
 os.environ.setdefault("CREWAI_TELEMETRY_ENABLED", "false")
@@ -900,4 +901,51 @@ def render_config_page():
 
 
 if __name__ == "__main__":
-    main()
+    parser = argparse.ArgumentParser(
+        description="Run the AstroAgent UI or CLI workflow",
+        formatter_class=argparse.RawDescriptionHelpFormatter,
+        epilog=(
+            "Examples:\n"
+            "  python app.py -q \"plot sin plot in green\"\n"
+            "  python app.py -q \"plot sin plot in green\" -c 1\n"
+        ),
+    )
+    parser.add_argument(
+        "-q",
+        "--question",
+        help="Workflow prompt to run from the CLI",
+        default="",
+    )
+    parser.add_argument(
+        "-c",
+        "--complexity",
+        type=int,
+        default=-1,
+        help="Task complexity (-1 to auto-detect)",
+    )
+    args = parser.parse_args()
+
+    if args.question:
+        from workflow import AstronomyWorkflow, WorkflowState
+
+        state = WorkflowState(
+            research_question=args.question,
+            task_complexity=args.complexity,
+        )
+        workflow = AstronomyWorkflow(state=state)
+        workflow.kickoff()
+        result_state = workflow.state
+        print("\n--- Workflow Result ---")
+        print(f"Workflow ID: {result_state.workflow_id}")
+        print(f"Status     : {result_state.status}")
+        print(f"Approved   : {result_state.approved}")
+        if result_state.execution_artifacts:
+            print("Artifacts  :")
+            for path in result_state.execution_artifacts:
+                print(f"  - {path}")
+        else:
+            print("Artifacts  : (none)")
+        print("\n--- Review ---")
+        print(result_state.review_report or "(no review report)")
+    else:
+        main()
