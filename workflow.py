@@ -20,6 +20,8 @@ from __future__ import annotations
 import glob
 import os
 import re
+import shutil
+import subprocess
 import uuid
 from datetime import datetime
 from typing import Any, Dict, List, Optional
@@ -100,6 +102,74 @@ def _discover_artifacts(results_dir: str) -> list[str]:
     for pattern in patterns:
         found.extend(glob.glob(os.path.join(results_dir, pattern)))
     return sorted(found)
+
+
+def _run_code_in_docker_direct(
+    code: str,
+    image: str,
+    results_dir: str,
+    libraries: list[str] | None = None,
+    timeout: int = 300,
+) -> tuple[str, str]:
+    """Run *code* inside a Docker container, bind-mounting *results_dir*.
+
+    This is a **direct** fallback that does not depend on the LLM calling
+    the CodeInterpreterTool.  It uses the Docker CLI so it works even when
+    the ``docker`` Python SDK is not importable.
+
+    Returns (stdout, stderr).
+    """
+    os.makedirs(results_dir, exist_ok=True)
+
+    container_name = "code-interpreter-direct"
+    # Remove stale container (ignore errors)
+    subprocess.run(
+        ["docker", "rm", "-f", container_name],
+        stdout=subprocess.DEVNULL,
+        stderr=subprocess.DEVNULL,
+    )
+
+    # Install libraries inside the container and run code
+    install_cmds = ""
+    if libraries:
+        pkgs = " ".join(libraries)
+        install_cmds = f"pip install --quiet {pkgs} 2>/dev/null; "
+
+    shell_cmd = f'{install_cmds}python3 -c {_shell_quote(code)}'
+
+    cmd = [
+        "docker", "run",
+        "--name", container_name,
+        "--rm",
+        "-v", f"{results_dir}:/workspace",
+        "-w", "/workspace",
+        image,
+        "sh", "-c", shell_cmd,
+    ]
+
+    try:
+        proc = subprocess.run(
+            cmd,
+            capture_output=True,
+            text=True,
+            timeout=timeout,
+        )
+        return proc.stdout, proc.stderr
+    except subprocess.TimeoutExpired:
+        subprocess.run(
+            ["docker", "rm", "-f", container_name],
+            stdout=subprocess.DEVNULL,
+            stderr=subprocess.DEVNULL,
+        )
+        return "", f"Execution timed out after {timeout}s"
+    except Exception as exc:
+        return "", f"Docker direct execution failed: {exc}"
+
+
+def _shell_quote(s: str) -> str:
+    """Shell-quote a string for safe embedding in sh -c '...'."""
+    import shlex
+    return shlex.quote(s)
 
 
 # ---------------------------------------------------------------------------
@@ -484,26 +554,32 @@ class AstronomyWorkflow(Flow[WorkflowState]):
         return self._execution_phase()
 
     def _execution_phase(self) -> Dict[str, Any]:
-        """Run the generated code inside a Docker sandbox."""
+        """Run the generated code inside a Docker sandbox.
+
+        Strategy:
+        1. Try via the CrewAI executor agent + CodeInterpreterTool.
+        2. If the agent returns empty / hallucinated output (no real tool
+           call), fall back to direct Docker execution.
+        """
         print("\n--- Executing Code in Docker Sandbox...")
         self.state.status = "executing"
 
+        code_text = self.state.generated_code or ""
+        if not code_text.strip():
+            self.state.execution_stderr = "No code to execute."
+            return {
+                "execution_stdout": "",
+                "execution_stderr": self.state.execution_stderr,
+            }
+
         # Clean up any leftover code-interpreter container from previous runs
-        try:
-            import docker as docker_lib
-            client = docker_lib.from_env()
-            try:
-                old = client.containers.get("code-interpreter")
-                old.remove(force=True)
-                print("   >> Removed stale code-interpreter container")
-            except Exception:
-                pass
-        except Exception:
-            pass  # docker SDK not required — tool handles it internally
+        subprocess.run(
+            ["docker", "rm", "-f", "code-interpreter"],
+            stdout=subprocess.DEVNULL,
+            stderr=subprocess.DEVNULL,
+        )
 
         pre_install = ", ".join(self.exec_config.pre_install)
-        # Escape the code for embedding in the task description
-        code_text = self.state.generated_code or ""
         escaped_code = code_text.replace('\\', '\\\\').replace('`', '\\`')
 
         task = Task(
@@ -544,15 +620,51 @@ class AstronomyWorkflow(Flow[WorkflowState]):
             os.chdir(prev_cwd)
 
         output = self._get_result_text(result)
-        if "error" in output.lower() or "traceback" in output.lower():
-            self.state.execution_stderr = output
-            self.state.execution_stdout = ""
+
+        # Detect whether the executor actually ran the tool.  If the output
+        # is empty or doesn't look like real execution output, fall back to
+        # running the code directly in Docker.
+        artifacts_after_crew = _discover_artifacts(self._results_dir)
+        tool_actually_ran = bool(
+            artifacts_after_crew
+            or "SAVED:" in output
+            or "Traceback" in output
+            or len(output.strip()) > 80
+        )
+
+        if not tool_actually_ran:
+            print("   >> Executor did not call tool — falling back to direct Docker execution")
+            stdout, stderr = _run_code_in_docker_direct(
+                code=code_text,
+                image=self.exec_config.image,
+                results_dir=self._results_dir,
+                libraries=self.exec_config.pre_install,
+                timeout=self.wf_config.max_retries * 120,
+            )
+            output = stdout or stderr
+            if stderr and "error" in stderr.lower():
+                self.state.execution_stderr = stderr
+                self.state.execution_stdout = stdout
+            else:
+                self.state.execution_stdout = output
+                self.state.execution_stderr = ""
         else:
-            self.state.execution_stdout = output
-            self.state.execution_stderr = ""
+            if "error" in output.lower() or "traceback" in output.lower():
+                self.state.execution_stderr = output
+                self.state.execution_stdout = ""
+            else:
+                self.state.execution_stdout = output
+                self.state.execution_stderr = ""
 
         # Discover any generated artifact files
         self.state.execution_artifacts = _discover_artifacts(self._results_dir)
+
+        if self.state.execution_artifacts:
+            print(f"   >> Found {len(self.state.execution_artifacts)} artifact(s):")
+            for a in self.state.execution_artifacts:
+                print(f"      - {a}")
+        else:
+            print("   >> No artifacts found in results directory")
 
         return {
             "execution_stdout": self.state.execution_stdout,
@@ -703,17 +815,32 @@ class AstronomyWorkflow(Flow[WorkflowState]):
     # ======================================================================
 
     def _save_code(self):
+        code_content = self.state.generated_code or ""
+
         code_path = self.get_code_path()
         os.makedirs(os.path.dirname(code_path), exist_ok=True)
         with open(code_path, "w") as f:
-            f.write(self.state.generated_code or "")
+            f.write(code_content)
         print(f"   Code saved to: {code_path}")
+
+        results_code_path = self.get_results_code_path()
+        os.makedirs(os.path.dirname(results_code_path), exist_ok=True)
+        with open(results_code_path, "w") as f:
+            f.write(code_content)
+        print(f"   Code saved to: {results_code_path}")
 
     def _save_readme(self):
         readme_path = self.get_readme_path()
+        artifact_prefix = f"../results/{self.state.workflow_id}/"
         with open(readme_path, "w") as f:
-            f.write(self.generate_readme())
+            f.write(self.generate_readme(artifact_prefix=artifact_prefix))
         print(f"   README saved to: {readme_path}")
+
+        results_readme_path = self.get_results_readme_path()
+        os.makedirs(os.path.dirname(results_readme_path), exist_ok=True)
+        with open(results_readme_path, "w") as f:
+            f.write(self.generate_readme(artifact_prefix=""))
+        print(f"   README saved to: {results_readme_path}")
 
     def get_code_path(self) -> str:
         return os.path.join(
@@ -727,10 +854,22 @@ class AstronomyWorkflow(Flow[WorkflowState]):
             f"README_{self.state.workflow_id}.md",
         )
 
+    def get_results_code_path(self) -> str:
+        return os.path.join(
+            self._results_dir,
+            f"workflow_{self.state.workflow_id}.py",
+        )
+
+    def get_results_readme_path(self) -> str:
+        return os.path.join(
+            self._results_dir,
+            "README.md",
+        )
+
     def get_results_dir(self) -> str:
         return self._results_dir
 
-    def generate_readme(self) -> str:
+    def generate_readme(self, artifact_prefix: str = "") -> str:
         exec_section = ""
         if self.state.execution_stdout:
             exec_section = (
@@ -739,8 +878,25 @@ class AstronomyWorkflow(Flow[WorkflowState]):
             )
         artifacts_section = ""
         if self.state.execution_artifacts:
-            lines = "\n".join(f"- `{a}`" for a in self.state.execution_artifacts)
-            artifacts_section = f"\n## Generated Artifacts\n\n{lines}\n"
+            def _artifact_name(path: str) -> str:
+                return os.path.basename(path)
+
+            lines = "\n".join(
+                f"- `{artifact_prefix}{_artifact_name(a)}`" for a in self.state.execution_artifacts
+            )
+
+            preview_exts = {".png", ".jpg", ".jpeg", ".svg", ".gif"}
+            previews = []
+            for a in self.state.execution_artifacts:
+                name = _artifact_name(a)
+                if os.path.splitext(name)[1].lower() in preview_exts:
+                    previews.append(f"![{name}]({artifact_prefix}{name})")
+
+            preview_section = ""
+            if previews:
+                preview_section = "\n\n" + "\n\n".join(previews) + "\n"
+
+            artifacts_section = f"\n## Generated Artifacts\n\n{lines}{preview_section}"
 
         return f"""# Workflow {self.state.workflow_id}
 

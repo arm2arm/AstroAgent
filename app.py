@@ -564,6 +564,17 @@ def launch_workflow(research_question: str, task_complexity: int):
                 stream_placeholder,
             )
 
+            # Flow updates its own state instance; grab the updated state.
+            state = workflow.state
+            if not state.execution_artifacts:
+                results_dir = Path(workflow.get_results_dir())
+                if results_dir.exists():
+                    patterns = ("*.png", "*.jpg", "*.jpeg", "*.svg", "*.pdf")
+                    artifacts: list[str] = []
+                    for pattern in patterns:
+                        artifacts.extend([str(p) for p in results_dir.glob(pattern)])
+                    state.execution_artifacts = sorted(set(artifacts))
+
             progress_bar.progress(100)
             status_text.markdown("**Status:** ✨ Workflow completed!")
 
@@ -624,6 +635,8 @@ def launch_workflow(research_question: str, task_complexity: int):
             **Generated Files:**
             - 📄 Python Script: `{workflow.get_code_path()}`
             - 📖 Documentation: `{workflow.get_readme_path()}`
+            - 📄 Results Script: `{workflow.get_results_code_path()}`
+            - 📖 Results README: `{workflow.get_results_readme_path()}`
             - 📁 Results Dir: `{workflow.get_results_dir()}`
             """)
 
@@ -638,7 +651,7 @@ def launch_workflow(research_question: str, task_complexity: int):
                     use_container_width=True,
                 )
             with col2:
-                readme_content = workflow.generate_readme()
+                readme_content = workflow.generate_readme(artifact_prefix="")
                 st.download_button(
                     "📥 Download README.md",
                     readme_content,
@@ -666,6 +679,8 @@ def launch_workflow(research_question: str, task_complexity: int):
                 "approved": state.approved,
                 "code_file": workflow.get_code_path(),
                 "readme_file": workflow.get_readme_path(),
+                "results_code_file": workflow.get_results_code_path(),
+                "results_readme_file": workflow.get_results_readme_path(),
                 "results_dir": workflow.get_results_dir(),
             }
             st.session_state.workflows.append(workflow_data)
