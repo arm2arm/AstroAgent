@@ -329,7 +329,7 @@ class AstronomyWorkflow(Flow[WorkflowState]):
         self._reviewer = None
         self._summarizer = None
 
-        super().__init__(state=state)
+        super().__init__(**state.model_dump())
 
         # Per-workflow results directory
         self._results_dir = os.path.abspath(

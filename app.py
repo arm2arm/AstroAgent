@@ -801,12 +801,16 @@ if __name__ == "__main__":
     if args.question:
         from workflow import AstronomyWorkflow, WorkflowState
         from importlib import metadata as _meta
+        from config import get_active_profile_name, list_profiles
 
         cfg = get_llm_config()
         num_ctx = cfg.num_ctx if cfg.num_ctx > 0 else cfg.context_window
+        profile_name = get_active_profile_name()
+        profiles = list_profiles()
         print("\n" + "=" * 60)
         print("  AstroAgent  —  CLI Mode")
         print("=" * 60)
+        print(f"  Profile     : [{os.getenv('LLM_PROFILE','0')}] {profile_name}")
         print(f"  Model       : {cfg.model}")
         print(f"  Provider    : {cfg.provider}")
         print(f"  Endpoint    : {cfg.base_url}")
@@ -821,6 +825,13 @@ if __name__ == "__main__":
             except Exception:
                 pass
         print(f"  packages    : {', '.join(_versions)}")
+        if profiles:
+            print("-" * 60)
+            print("  Available profiles:")
+            active = os.getenv("LLM_PROFILE", "0").strip()
+            for p in profiles:
+                marker = " <<" if p["id"] == active else ""
+                print(f"    [{p['id']}] {p['name']:20s}  {p['model']}{marker}")
         print("=" * 60)
         print(f"  Question    : {args.question}")
         print(f"  Complexity  : {args.complexity}")

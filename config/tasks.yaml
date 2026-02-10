@@ -3,87 +3,60 @@
 # ============================================================================
 # Each top-level key is a task identifier referenced in Python code.
 # Supports {variable} placeholders resolved at runtime via str.format().
-#
-# Fields: description, expected_output, agent (optional — set in Python)
 # ============================================================================
 
 planning_task:
   description: >
-    Create a detailed plan for this task:
-    "{research_question}"
+    USER REQUEST: "{research_question}"
 
     {memory_context}
 
-    Your plan should include:
-    1. Inputs and assumptions
-    2. Data handling steps (if any)
-    3. Key implementation steps
-    4. Expected outputs
-
-    Be specific and practical.
+    Create a short plan (numbered steps) to implement this request.
+    Include only what the user asked for.
   expected_output: >
-    Detailed analysis plan with clear steps
+    Numbered plan with clear steps
 
 analysis_task:
   description: >
-    Design the analysis approach for this plan:
+    Implement this plan:
 
     {analysis_plan}
 
     {memory_context}
 
-    Specify:
-    1. Methods to use
-    2. Visualization strategies (plots, diagrams)
-    3. Quality checks and validation
-    4. Expected outputs
-
-    Focus on practical, executable steps.
+    Specify which Python libraries and methods to use for each step.
+    Be concise.
   expected_output: >
-    Statistical analysis strategy with methods
+    Technical approach with library choices
 
 coding_task:
   description: >
-    Generate a complete, self-contained Python script for:
-    "{research_question}"
+    USER REQUEST: "{research_question}"
+
+    Write a complete Python script that does EXACTLY what is requested above.
 
     {context}
     {revision_hint}
 
-    CRITICAL requirements:
-    - Use ONLY these libraries (already installed): {pre_install}
+    REQUIREMENTS:
+    - Available libraries: {pre_install}
+    - The script must run top-to-bottom without errors.
+    - If you define functions, CALL them in `if __name__ == "__main__":`.
     - PRINT all key results to stdout.
-    - Write FLAT executable code that runs top-to-bottom.
-      If you define helper functions, you MUST call them:
-        if __name__ == "__main__":
-            main()
-    - Include proper error handling.
-    - The script must work standalone (no external data files
-      unless explicitly requested).
-    - For simple tasks use numpy/scipy to generate data directly —
-      do NOT fetch remote datasets.
+    - Do NOT fetch remote data unless the user asked for it.
+    - For plotting tasks: use matplotlib with Agg backend, save with
+      plt.savefig("plot.png", dpi=150, bbox_inches="tight"), print
+      "SAVED: plot.png", NEVER call plt.show().
 
-    ONLY if the task involves plotting or visualization:
-    - Set up matplotlib for headless rendering:
-        import matplotlib
-        matplotlib.use("Agg")
-        import matplotlib.pyplot as plt
-    - Save ALL plots to the CURRENT WORKING DIRECTORY:
-        plt.savefig("descriptive_name.png", dpi=150, bbox_inches="tight")
-        print("SAVED: descriptive_name.png")
-    - NEVER call plt.show()
+    Return ONLY a ```python code block. No explanations outside it.
 
-    If the task does NOT involve plotting, do NOT import matplotlib
-    or produce image files. Printed results are valid output.
-
-    Return ONLY the Python code inside a ```python code fence.
+    REMINDER — the user asked: "{research_question}"
   expected_output: >
-    Complete executable Python script
+    Complete executable Python script in a ```python code block
 
 review_task:
   description: >
-    Review this Python code AND its execution output.
-    The ORIGINAL USER REQUEST was: "{research_question}"
+    ORIGINAL USER REQUEST: "{research_question}"
 
     --- CODE ---
     {generated_code}
@@ -93,29 +66,20 @@ review_task:
     {artifact_info}
     {memory_context}
 
-    Check:
-    1. Did the code execute without errors?
-    2. Does the code address the ORIGINAL USER REQUEST?
-    3. If the task required plots/images:
-       a. Does every plt.plot/scatter/bar have a matching plt.savefig()?
-       b. Were expected output files actually produced? (see GENERATED FILES)
-       c. If NO output files for a plotting task → NEEDS REVISION.
-    4. If the task did NOT require plots, do NOT reject just because
-       no image files were produced. Printed results are valid output.
-    5. Are all defined functions actually called (not just defined)?
-    6. Does stdout contain meaningful output?
+    REVIEW CHECKLIST:
+    1. Does the code do what the user asked for?
+       Re-read the request above. If the user asked to "plot sine
+       in blue and cos in green" — does the code plot sine in blue
+       and cosine in green? If not → NEEDS REVISION.
+    2. Did it run without errors?
+    3. If it should produce a plot, was an image file saved?
+       (Check GENERATED FILES section.) No image → NEEDS REVISION.
+    4. Are defined functions actually called?
 
-    IMPORTANT: If the code ran successfully and produced correct
-    results matching the user's request, mark it APPROVED. Only
-    reject if there are real errors or clearly wrong results.
-
-    End your review with EXACTLY one of these verdicts on its own line:
-    APPROVED
-    NEEDS REVISION
-
-    If NEEDS REVISION, list the specific issues as bullet points.
+    End with exactly one line: APPROVED or NEEDS REVISION.
+    If NEEDS REVISION, list specific fixes as bullet points.
   expected_output: >
-    Code review report ending with APPROVED or NEEDS REVISION
+    Review report ending with APPROVED or NEEDS REVISION
 
 summarization_task:
   description: >

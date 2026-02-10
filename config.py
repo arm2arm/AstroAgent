@@ -72,27 +72,88 @@ class StorageConfig:
     db_path: str = "storage/memory.db"
 
 
+def _resolve_profile_env(key: str, default: str = "") -> str:
+    """Return the env value for *key*, with profile override.
+
+    When ``LLM_PROFILE=N`` (N >= 1) is set, any ``LLM_N_<SUFFIX>`` variable
+    takes precedence over the plain ``LLM_<SUFFIX>`` / ``EMBED_<SUFFIX>``.
+    This lets users switch endpoints by changing a single number.
+    """
+    profile = os.getenv("LLM_PROFILE", "").strip()
+    if profile and profile != "0":
+        # Map plain keys to their profiled counterparts
+        # LLM_BASE_URL   -> LLM_{N}_BASE_URL
+        # EMBED_MODEL    -> LLM_{N}_EMBED_MODEL
+        if key.startswith("LLM_"):
+            suffix = key[4:]  # e.g. "BASE_URL", "MODEL"
+            profiled = f"LLM_{profile}_{suffix}"
+        elif key.startswith("EMBED_"):
+            profiled = f"LLM_{profile}_{key}"  # e.g. LLM_1_EMBED_MODEL
+        else:
+            profiled = None
+
+        if profiled:
+            val = os.getenv(profiled, "").strip()
+            if val:  # only override when the profile var is non-empty
+                return val
+    return os.getenv(key, default)
+
+
+def get_active_profile_name() -> str:
+    """Return the human-readable name of the active profile (or 'manual')."""
+    _load_dotenv_once()
+    profile = os.getenv("LLM_PROFILE", "").strip()
+    if profile and profile != "0":
+        name = os.getenv(f"LLM_{profile}_NAME", "").strip()
+        return name or f"Profile {profile}"
+    return "manual"
+
+
+def list_profiles() -> list[dict[str, str]]:
+    """Discover all LLM_N_* profiles defined in the environment."""
+    _load_dotenv_once()
+    profiles = []
+    for n in range(1, 20):
+        name = os.getenv(f"LLM_{n}_NAME", "").strip()
+        if not name:
+            model = os.getenv(f"LLM_{n}_MODEL", "").strip()
+            if not model:
+                continue
+            name = f"Profile {n}"
+        profiles.append({
+            "id": str(n),
+            "name": name,
+            "model": os.getenv(f"LLM_{n}_MODEL", ""),
+            "base_url": os.getenv(f"LLM_{n}_BASE_URL", ""),
+        })
+    return profiles
+
+
 def get_llm_config() -> LLMConfig:
-    """Load active LLM configuration from environment."""
+    """Load active LLM configuration from environment.
+
+    When ``LLM_PROFILE=N`` is set, values from ``LLM_N_*`` override
+    the plain ``LLM_*`` / ``EMBED_*`` keys.
+    """
     _load_dotenv_once()
     return LLMConfig(
-        base_url=os.getenv("LLM_BASE_URL", "http://localhost:11434/v1"),
-        api_key=os.getenv("LLM_API_KEY", ""),
-        model=os.getenv("LLM_MODEL", "qwen3-coder:latest"),
-        provider=os.getenv("LLM_PROVIDER", "openai"),
+        base_url=_resolve_profile_env("LLM_BASE_URL", "http://localhost:11434/v1"),
+        api_key=_resolve_profile_env("LLM_API_KEY", ""),
+        model=_resolve_profile_env("LLM_MODEL", "qwen3-coder:latest"),
+        provider=_resolve_profile_env("LLM_PROVIDER", "openai"),
         temperature=float(os.getenv("LLM_TEMPERATURE", "0.3")),
-        max_tokens=int(os.getenv("LLM_MAX_TOKENS", "4000")),
+        max_tokens=int(_resolve_profile_env("LLM_MAX_TOKENS", "4000")),
         timeout=int(os.getenv("LLM_TIMEOUT", "120")),
-        context_window=int(os.getenv("LLM_CONTEXT_WINDOW", "32768")),
-        num_ctx=int(os.getenv("LLM_NUM_CTX", "0")),
-        output_budget=int(os.getenv("LLM_OUTPUT_BUDGET", "8192")),
+        context_window=int(_resolve_profile_env("LLM_CONTEXT_WINDOW", "32768")),
+        num_ctx=int(_resolve_profile_env("LLM_NUM_CTX", "0")),
+        output_budget=int(_resolve_profile_env("LLM_OUTPUT_BUDGET", "8192")),
         safety_margin=int(os.getenv("LLM_SAFETY_MARGIN", "512")),
         summary_trigger_tokens=int(os.getenv("LLM_SUMMARY_TRIGGER_TOKENS", "2000")),
         summary_target_tokens=int(os.getenv("LLM_SUMMARY_TARGET_TOKENS", "600")),
-        embed_model=os.getenv("EMBED_MODEL", "nomic-embed-text:latest"),
-        embed_provider=os.getenv("EMBED_PROVIDER", "ollama"),
-        embed_base_url=os.getenv("EMBED_BASE_URL", ""),
-        embed_api_key=os.getenv("EMBED_API_KEY", ""),
+        embed_model=_resolve_profile_env("EMBED_MODEL", "nomic-embed-text:latest"),
+        embed_provider=_resolve_profile_env("EMBED_PROVIDER", "ollama"),
+        embed_base_url=_resolve_profile_env("EMBED_BASE_URL", ""),
+        embed_api_key=_resolve_profile_env("EMBED_API_KEY", ""),
     )
 
 
