@@ -50,6 +50,13 @@ class WorkflowState(BaseModel):
 
     workflow_id: str = Field(default_factory=lambda: str(uuid.uuid4())[:8])
     timestamp: datetime = Field(default_factory=datetime.now)
+    start_time: Optional[datetime] = None
+    end_time: Optional[datetime] = None
+    duration_seconds: float = 0.0
+    token_usage: Dict[str, Dict[str, int]] = Field(default_factory=dict)
+    total_prompt_tokens: int = 0
+    total_completion_tokens: int = 0
+    total_tokens: int = 0
 
     # User inputs
     research_question: str = ""
@@ -86,6 +93,18 @@ def _extract_code_block(text: str) -> str:
     return the full text if no fences are found."""
     m = re.search(r"```(?:python)?\s*\n(.*?)```", text, re.DOTALL)
     return m.group(1).strip() if m else text.strip()
+
+
+def _format_duration(seconds: float) -> str:
+    if seconds <= 0:
+        return "0s"
+    minutes, sec = divmod(int(seconds), 60)
+    hours, minutes = divmod(minutes, 60)
+    if hours:
+        return f"{hours}h {minutes}m {sec}s"
+    if minutes:
+        return f"{minutes}m {sec}s"
+    return f"{sec}s"
 
 
 def _sanitize_code(code: str) -> str:
@@ -331,9 +350,11 @@ class AstronomyWorkflow(Flow[WorkflowState]):
 
         super().__init__(**state.model_dump())
 
-        # Per-workflow results directory
+        # Per-workflow results directory (include timestamp for readability)
+        ts = self.state.timestamp.strftime("%Y%m%d_%H%M%S")
+        results_folder = f"{self.state.workflow_id}_{ts}"
         self._results_dir = os.path.abspath(
-            os.path.join(self.wf_config.results_dir, self.state.workflow_id)
+            os.path.join(self.wf_config.results_dir, results_folder)
         )
         os.makedirs(self._results_dir, exist_ok=True)
 
@@ -398,6 +419,39 @@ class AstronomyWorkflow(Flow[WorkflowState]):
                 print(f"   >> Memory init skipped: {exc}")
         return Crew(**crew_kwargs)
 
+    def _task_prompt_text(self, task: Task) -> str:
+        description = getattr(task, "description", "") or ""
+        expected = getattr(task, "expected_output", "") or ""
+        return f"{description}\n\nExpected Output:\n{expected}".strip()
+
+    def _record_usage(self, label: str, prompt_text: str, output_text: str) -> None:
+        llm_cfg = get_llm_config()
+        prompt_tokens = estimate_tokens(prompt_text, model=llm_cfg.model)
+        completion_tokens = estimate_tokens(output_text or "", model=llm_cfg.model)
+        total_tokens = prompt_tokens + completion_tokens
+
+        entry = self.state.token_usage.setdefault(label, {
+            "prompt_tokens": 0,
+            "completion_tokens": 0,
+            "total_tokens": 0,
+        })
+        entry["prompt_tokens"] += prompt_tokens
+        entry["completion_tokens"] += completion_tokens
+        entry["total_tokens"] += total_tokens
+
+        self.state.total_prompt_tokens += prompt_tokens
+        self.state.total_completion_tokens += completion_tokens
+        self.state.total_tokens += total_tokens
+
+    def _mark_started(self) -> None:
+        if self.state.start_time is None:
+            self.state.start_time = datetime.now()
+
+    def _mark_finished(self) -> None:
+        self.state.end_time = datetime.now()
+        if self.state.start_time:
+            self.state.duration_seconds = (self.state.end_time - self.state.start_time).total_seconds()
+
     def _apply_token_budget(self, task: Task, agents: list) -> None:
         """Set per-task max_tokens based on prompt length and context window."""
         llm_cfg = get_llm_config()
@@ -448,9 +502,12 @@ class AstronomyWorkflow(Flow[WorkflowState]):
             agent=self.summarizer,
         )
         self._apply_token_budget(task, [self.summarizer])
+        prompt_text = self._task_prompt_text(task)
         crew = self._make_crew([self.summarizer], [task])
         result = crew.kickoff()
-        return self._get_result_text(result)
+        summary_text = self._get_result_text(result)
+        self._record_usage(f"summarizer:{label}", prompt_text, summary_text)
+        return summary_text
 
     def _get_result_text(self, result: Any) -> str:
         """Extract text from CrewAI result objects safely."""
@@ -473,6 +530,7 @@ class AstronomyWorkflow(Flow[WorkflowState]):
     @start()
     def classify_task(self) -> Dict[str, Any]:
         """Decide simple vs complex based on the task_complexity field."""
+        self._mark_started()
         print(f"\n>>> Starting workflow {self.state.workflow_id}")
         print(f"   Question : {self.state.research_question}")
         print(f"   Complexity: {self.state.task_complexity}")
@@ -532,9 +590,11 @@ class AstronomyWorkflow(Flow[WorkflowState]):
         )
 
         self._apply_token_budget(task, [self.planner])
+        prompt_text = self._task_prompt_text(task)
         crew = self._make_crew([self.planner], [task])
         result = crew.kickoff()
         self.state.analysis_plan = self._get_result_text(result)
+        self._record_usage("planner", prompt_text, self.state.analysis_plan)
         return {"analysis_plan": self.state.analysis_plan}
 
     @listen(planning_phase)
@@ -560,9 +620,11 @@ class AstronomyWorkflow(Flow[WorkflowState]):
         )
 
         self._apply_token_budget(task, [self.analyst])
+        prompt_text = self._task_prompt_text(task)
         crew = self._make_crew([self.analyst], [task])
         result = crew.kickoff()
         self.state.statistical_approach = self._get_result_text(result)
+        self._record_usage("analyst", prompt_text, self.state.statistical_approach)
         return {"statistical_approach": self.state.statistical_approach}
 
     # ======================================================================
@@ -636,10 +698,13 @@ class AstronomyWorkflow(Flow[WorkflowState]):
         )
 
         self._apply_token_budget(task, [self.coder])
+        prompt_text = self._task_prompt_text(task)
         crew = self._make_crew([self.coder], [task])
         result = crew.kickoff()
         raw_code = _extract_code_block(self._get_result_text(result))
         self.state.generated_code = _sanitize_code(raw_code)
+        label = f"coder_round_{self.state.iterations + 1}"
+        self._record_usage(label, prompt_text, self.state.generated_code)
         self._save_code()
         return {"generated_code": self.state.generated_code}
 
@@ -773,9 +838,12 @@ class AstronomyWorkflow(Flow[WorkflowState]):
         )
 
         self._apply_token_budget(task, [self.reviewer])
+        prompt_text = self._task_prompt_text(task)
         crew = self._make_crew([self.reviewer], [task])
         result = crew.kickoff()
         self.state.review_report = self._get_result_text(result)
+        label = f"reviewer_round_{self.state.iterations + 1}"
+        self._record_usage(label, prompt_text, self.state.review_report)
 
         # Parse verdict
         upper = (self.state.review_report or "").upper()
@@ -835,6 +903,7 @@ class AstronomyWorkflow(Flow[WorkflowState]):
     def finalize(self) -> Dict[str, Any]:
         """Mark workflow complete, persist files."""
         self.state.status = "completed"
+        self._mark_finished()
         self._save_code()
         self._save_readme()
 
@@ -882,7 +951,7 @@ class AstronomyWorkflow(Flow[WorkflowState]):
 
     def _save_readme(self):
         readme_path = self.get_readme_path()
-        artifact_prefix = f"../results/{self.state.workflow_id}/"
+        artifact_prefix = f"../results/{os.path.basename(self._results_dir)}/"
         with open(readme_path, "w") as f:
             f.write(self.generate_readme(artifact_prefix=artifact_prefix))
         print(f"   README saved to: {readme_path}")
@@ -949,11 +1018,38 @@ class AstronomyWorkflow(Flow[WorkflowState]):
 
             artifacts_section = f"\n## Generated Artifacts\n\n{lines}{preview_section}"
 
+        duration = _format_duration(self.state.duration_seconds)
+        token_lines = [
+            f"- Prompt tokens: {self.state.total_prompt_tokens}",
+            f"- Completion tokens: {self.state.total_completion_tokens}",
+            f"- Total tokens: {self.state.total_tokens}",
+        ]
+        breakdown_lines = []
+        for label, usage in sorted(self.state.token_usage.items()):
+            breakdown_lines.append(
+                f"- {label}: {usage.get('prompt_tokens', 0)} prompt, "
+                f"{usage.get('completion_tokens', 0)} completion, "
+                f"{usage.get('total_tokens', 0)} total"
+            )
+        token_breakdown = "\n".join(breakdown_lines) if breakdown_lines else "- N/A"
+
         return f"""# Workflow {self.state.workflow_id}
 
 Generated: {self.state.timestamp.strftime('%Y-%m-%d %H:%M:%S')}
 Review Iterations: {self.state.iterations}
 Approved: {self.state.approved}
+
+---
+
+## Run Metrics
+
+Total Time: {duration}
+
+Token Usage:
+{chr(10).join(token_lines)}
+
+Token Breakdown:
+{token_breakdown}
 
 ---
 
